@@ -1,6 +1,8 @@
 pub mod cli;
+mod samtools;
 use cli::{AlignArgs, IndexArgs, MapArgs};
 use minimap2::{Aligner, Preset};
+use rust_htslib::bam::Read;
 
 fn build_aligner(preset: &str, index_args: &IndexArgs, map_args: &MapArgs, align_args: &AlignArgs) -> Aligner{
 
@@ -37,11 +39,48 @@ pub fn query2ref_align(
     }
 
     
-
-
 }
 
-pub fn subreads2smc_align() {}
+pub fn subreads2smc_align(subreads_bam: &str, smc_bam: &str) {
+
+    let sorted_subreads_bam = samtools::sort(subreads_bam, "ch");
+    let sorted_smc_bam = samtools::sort(smc_bam, "ch");
+
+    let mut smc_bam_reader = rust_htslib::bam::Reader::from_path(&sorted_smc_bam).unwrap();
+    smc_bam_reader.set_threads(5).unwrap();
+    let mut subreads_bam_reader = rust_htslib::bam::Reader::from_path(&sorted_subreads_bam).unwrap();
+    subreads_bam_reader.set_threads(5).unwrap();
+
+    
+    let mut smc_records = smc_bam_reader.records();
+    let mut subreads_records = subreads_bam_reader.records();
+
+    loop {
+        
+        let smc_record = smc_records.next();
+        if smc_record.is_none() {
+            break;
+        }
+
+        let smc_record = smc_record.unwrap().unwrap();
+
+
+        let mut sbr_record = None;
+
+        loop {
+            if sbr_record.is_none() {
+                sbr_record = subreads_records.next();
+            }
+
+            let sbr = sbr_record.unwrap().unwrap();
+            
+
+            sbr_record = subreads_records.next();
+        }
+
+    }
+
+}
 
 #[cfg(test)]
 mod tests {
