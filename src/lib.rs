@@ -15,6 +15,10 @@ use rust_htslib::bam::{
 
 type BamRecord = rust_htslib::bam::record::Record;
 
+pub struct AlignResult {
+    record: BamRecord
+}
+
 pub fn build_aligner(
     preset: &str,
     index_args: &IndexArgs,
@@ -97,7 +101,7 @@ pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
     }
 }
 
-pub fn aligner(query_record_recv: Receiver<QueryRecord>, aligners: &Vec<Aligner>) {
+pub fn aligner(query_record_recv: Receiver<QueryRecord>, align_res_sender: Sender<AlignResult>, aligners: &Vec<Aligner>) {
     for query_record in query_record_recv {
         aligner_core(&query_record, aligners);
     }
@@ -122,7 +126,7 @@ pub fn aligner_core(query_record: &QueryRecord, aligners: &Vec<Aligner>) {
 
 /// targetidx: &HashMap<target_name, (idx, target_len)>
 pub fn bam_writer(
-    recv: Receiver<BamRecord>,
+    recv: Receiver<AlignResult>,
     target_idx: &HashMap<String, (usize, usize)>,
     o_path: &str,
 ) {
@@ -146,8 +150,8 @@ pub fn bam_writer(
         rust_htslib::bam::Writer::from_path(o_path, &header, rust_htslib::bam::Format::Bam)
             .unwrap();
     writer.set_threads(4).unwrap();
-    for record in recv {
-        writer.write(&record).unwrap();
+    for align_res in recv {
+        writer.write(&align_res.record).unwrap();
     }
 }
 

@@ -12,6 +12,8 @@ pub struct Cli {
     #[arg(long="preset", default_value_t=String::from_str("map-ont").unwrap())]
     pub preset: String,
 
+
+
     #[command(subcommand)]
     pub commands: Commands
 
@@ -37,7 +39,19 @@ pub struct IndexArgs {
 pub struct ReadsToRefAlignArgs {
 
     #[command(flatten)]
-    io_args: IoArgs
+    pub io_args: IoArgs,
+
+    #[command(flatten)]
+    pub index_args: IndexArgs,
+
+    #[command(flatten)]
+    pub map_args: MapArgs,
+
+    #[command(flatten)]
+    pub align_args: AlignArgs,
+
+    #[command(flatten)]
+    pub oup_args: OupArgs
 
 }
 
@@ -76,6 +90,12 @@ pub struct IoArgs {
 
     #[arg(short='p', help="output a file named ${p}.bam")]
     pub prefix: String
+}
+
+impl IoArgs {
+    pub fn get_oup_path(&self) -> String {
+        format!("{}.bam", self.prefix)
+    }
 }
 
 #[derive(Debug, Args, Clone)]
