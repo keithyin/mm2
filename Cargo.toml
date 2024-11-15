@@ -4,3 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+clap = {version="4.4", features=["derive"]}
+rust-htslib = "0.47.0"
+tracing = "0.1.40"
+tracing-subscriber = {version="0.3.18", features=["json", "env-filter", "fmt", "time", "local-time"]}
+time = "0.3.34"
+glob = "0.3.1"
+anyhow = "1.0.82"
+lazy_static = "1.4.0"
+rayon="1.8.1"
+indicatif= {version="0.17.7"}
+bio="1.6.0"
+uuid = { version = "1.0", features = ["v5"] }
+minimap2="0.1.20+minimap2.2.28"
