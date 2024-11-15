@@ -2,7 +2,6 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
-use rust_htslib::bam::Read;
 
 /// 表示一个 FASTA 记录的结构体
 #[derive(Debug, PartialEq)]
