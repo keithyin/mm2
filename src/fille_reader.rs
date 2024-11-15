@@ -5,7 +5,7 @@ use std::path::Path;
 use rust_htslib::bam::Read;
 
 /// 表示一个 FASTA 记录的结构体
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct QueryRecord {
     pub qname: String,
     pub sequence: String,
@@ -110,4 +110,31 @@ impl Iterator for FastaFileReader {
 
         return Some(fasta_record);
     }
+}
+
+
+#[cfg(test)]
+mod test {
+    use super::{read_fasta, FastaFileReader};
+
+
+    #[test]
+    fn test_read_fasta() {
+        let fname = "test_data/seq.fasta";
+        let records = read_fasta(fname).unwrap();
+        assert_eq!(records[0].sequence, "ATCGTACGTACGTACGTAGC");
+        assert_eq!(records[1].sequence, "GGGTTTAAACCCGGGTTT");
+    }
+
+    #[test]
+    fn test_fasta_file_reader() {
+        let fname = "test_data/seq.fasta";
+        let mut reader = FastaFileReader::new(fname.to_string());
+
+        assert_eq!(reader.next().unwrap().sequence, "ATCGTACGTACGTACGTAGC");
+        assert_eq!(reader.next().unwrap().sequence, "GGGTTTAAACCCGGGTTT");
+
+
+    }
+
 }

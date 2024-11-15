@@ -121,7 +121,11 @@ pub fn aligner_core(query_record: &QueryRecord, aligners: &Vec<Aligner>) {
 }
 
 /// targetidx: &HashMap<target_name, (idx, target_len)>
-pub fn bam_writer(recv: Receiver<BamRecord>, target_idx: &HashMap<String, (usize, usize)>, o_path: &str) {
+pub fn bam_writer(
+    recv: Receiver<BamRecord>,
+    target_idx: &HashMap<String, (usize, usize)>,
+    o_path: &str,
+) {
     let mut header = Header::new();
     let mut hd = HeaderRecord::new(b"HD");
     hd.push_tag(b"VN", "1.5");
@@ -138,7 +142,9 @@ pub fn bam_writer(recv: Receiver<BamRecord>, target_idx: &HashMap<String, (usize
         header.push_record(&hd);
     }
 
-    let mut writer = rust_htslib::bam::Writer::from_path(o_path, &header, rust_htslib::bam::Format::Bam).unwrap();
+    let mut writer =
+        rust_htslib::bam::Writer::from_path(o_path, &header, rust_htslib::bam::Format::Bam)
+            .unwrap();
     writer.set_threads(4).unwrap();
     for record in recv {
         writer.write(&record).unwrap();

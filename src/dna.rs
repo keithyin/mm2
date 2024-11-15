@@ -21,3 +21,18 @@ pub fn reverse_complement(dna: &str) -> String {
     // 将结果转回字符串
     unsafe { String::from_utf8_unchecked(result) }
 }
+
+
+#[cfg(test)]
+mod test {
+    use crate::dna::reverse_complement;
+
+
+    #[test]
+    fn test_reverse_complement() {
+
+        let seq = "ACGT";
+        assert_eq!(reverse_complement(seq), "ACGT");
+
+    }
+}
