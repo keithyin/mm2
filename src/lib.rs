@@ -1,20 +1,21 @@
 pub mod cli;
 pub mod dna;
 pub mod fille_reader;
-use std::thread;
+use std::{collections::HashMap, thread};
 
 use cli::{AlignArgs, IndexArgs, MapArgs};
 use crossbeam::channel::{Receiver, Sender};
 use fille_reader::{FastaFileReader, QueryRecord};
-use minimap2::{Aligner, Preset};
+use minimap2::Aligner;
 use rust_htslib::bam::{
+    header::HeaderRecord,
     record::{Cigar, CigarString},
-    Read,
+    Header, Read,
 };
 
 type BamRecord = rust_htslib::bam::record::Record;
 
-fn build_aligner(
+pub fn build_aligner(
     preset: &str,
     index_args: &IndexArgs,
     map_args: &MapArgs,
@@ -103,7 +104,6 @@ pub fn aligner(query_record_recv: Receiver<QueryRecord>, aligners: &Vec<Aligner>
 }
 
 pub fn aligner_core(query_record: &QueryRecord, aligners: &Vec<Aligner>) {
-    
     for aligner in aligners {
         for hit in aligner
             .map(
@@ -118,16 +118,37 @@ pub fn aligner_core(query_record: &QueryRecord, aligners: &Vec<Aligner>) {
             println!("{:?}", hit);
         }
     }
-
-    
-
 }
 
-pub fn writer() {}
+/// targetidx: &HashMap<target_name, (idx, target_len)>
+pub fn bam_writer(recv: Receiver<BamRecord>, target_idx: &HashMap<String, (usize, usize)>, o_path: &str) {
+    let mut header = Header::new();
+    let mut hd = HeaderRecord::new(b"HD");
+    hd.push_tag(b"VN", "1.5");
+    hd.push_tag(b"SO", "unknown");
+    header.push_record(&hd);
+
+    let mut targets = target_idx.iter().collect::<Vec<_>>();
+    targets.sort_by_key(|tup| tup.1 .0);
+
+    for target in targets {
+        let mut hd = HeaderRecord::new(b"SQ");
+        hd.push_tag(b"SN", &target.0);
+        hd.push_tag(b"LN", target.1 .1);
+        header.push_record(&hd);
+    }
+
+    let mut writer = rust_htslib::bam::Writer::from_path(o_path, &header, rust_htslib::bam::Format::Bam).unwrap();
+    writer.set_threads(4).unwrap();
+    for record in recv {
+        writer.write(&record).unwrap();
+    }
+}
 
 pub fn build_bam_record_from_mapping(
     hit: &minimap2::Mapping,
     query_record: &QueryRecord,
+    target_idx: &HashMap<String, (usize, usize)>,
 ) -> BamRecord {
     let mut bam_record = BamRecord::new();
 
@@ -155,13 +176,14 @@ pub fn build_bam_record_from_mapping(
         &vec![255; seq.len()],
     );
 
+    bam_record.set_tid(target_idx.get(hit.target_name.as_ref().unwrap()).unwrap().0 as i32);
+
     if !hit.is_primary {
         bam_record.set_secondary();
     }
     if hit.is_supplementary {
         bam_record.set_supplementary();
     }
-
 
     bam_record
         .push_aux(
@@ -175,7 +197,7 @@ pub fn build_bam_record_from_mapping(
             rust_htslib::bam::record::Aux::String(aln_info.md.as_ref().unwrap()),
         )
         .unwrap();
-    
+
     bam_record
 }
 
