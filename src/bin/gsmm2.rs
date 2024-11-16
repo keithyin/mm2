@@ -2,10 +2,10 @@ use std::{collections::HashMap, thread};
 
 use clap::Parser;
 use mm2::{
-    align_worker, write_bam_worker, build_aligner,
+    align_worker, build_aligner,
     cli::{self, ReadsToRefAlignArgs},
     fille_reader::read_fasta,
-    query_seq_sender,
+    query_seq_sender, write_bam_worker,
 };
 
 fn alignment(preset: &str, args: &ReadsToRefAlignArgs) {
@@ -32,10 +32,10 @@ fn alignment(preset: &str, args: &ReadsToRefAlignArgs) {
     );
 
     /*
-        1. query_seq_sender
-        2. align
-        3. write to bam
-     */
+       1. query_seq_sender
+       2. align
+       3. write to bam
+    */
     thread::scope(|s| {
         let aligners = &aligners;
         let target2idx = &target2idx;
@@ -50,7 +50,7 @@ fn alignment(preset: &str, args: &ReadsToRefAlignArgs) {
         for _ in 0..num_threads {
             let qs_recv_ = qs_recv.clone();
             let align_res_sender_ = align_res_sender.clone();
-            s.spawn(move || align_worker(qs_recv_, align_res_sender_, aligners));
+            s.spawn(move || align_worker(qs_recv_, align_res_sender_, aligners, target2idx));
         }
         drop(qs_recv);
         drop(align_res_sender);

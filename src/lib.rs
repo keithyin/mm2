@@ -17,8 +17,8 @@ type BamRecord = rust_htslib::bam::record::Record;
 type BamWriter = rust_htslib::bam::Writer;
 type BamReader = rust_htslib::bam::Reader;
 
-pub struct AlignResult {
-    record: BamRecord,
+pub struct SingleQueryAlignResult {
+    pub records: Vec<BamRecord>,
 }
 
 pub fn build_aligner(
@@ -112,15 +112,22 @@ pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
 
 pub fn align_worker(
     query_record_recv: Receiver<QueryRecord>,
-    align_res_sender: Sender<AlignResult>,
+    align_res_sender: Sender<SingleQueryAlignResult>,
     aligners: &Vec<Aligner>,
+    target_idx: &HashMap<String, (usize, usize)>,
 ) {
     for query_record in query_record_recv {
-        align_single_query_to_targets(&query_record, aligners);
+        let records = align_single_query_to_targets(&query_record, aligners, target_idx);
+        align_res_sender.send(SingleQueryAlignResult{records}).unwrap();
     }
 }
 
-pub fn align_single_query_to_targets(query_record: &QueryRecord, aligners: &Vec<Aligner>) {
+pub fn align_single_query_to_targets(
+    query_record: &QueryRecord,
+    aligners: &Vec<Aligner>,
+    target_idx: &HashMap<String, (usize, usize)>,
+) -> Vec<BamRecord> {
+    let mut align_records = vec![];
     for aligner in aligners {
         for hit in aligner
             .map(
@@ -132,14 +139,17 @@ pub fn align_single_query_to_targets(query_record: &QueryRecord, aligners: &Vec<
             )
             .unwrap()
         {
-            println!("{:?}", hit);
+            let record = build_bam_record_from_mapping(&hit, query_record, target_idx);
+            align_records.push(record);
         }
     }
+
+    align_records
 }
 
 /// targetidx: &HashMap<target_name, (idx, target_len)>
 pub fn write_bam_worker(
-    recv: Receiver<AlignResult>,
+    recv: Receiver<SingleQueryAlignResult>,
     target_idx: &HashMap<String, (usize, usize)>,
     o_path: &str,
 ) {
@@ -162,7 +172,9 @@ pub fn write_bam_worker(
     let mut writer = BamWriter::from_path(o_path, &header, rust_htslib::bam::Format::Bam).unwrap();
     writer.set_threads(4).unwrap();
     for align_res in recv {
-        writer.write(&align_res.record).unwrap();
+        for record in align_res.records {
+            writer.write(&record).unwrap();
+        }
     }
 }
 
@@ -212,6 +224,7 @@ pub fn build_bam_record_from_mapping(
             rust_htslib::bam::record::Aux::String(aln_info.cs.as_ref().unwrap()),
         )
         .unwrap();
+
     bam_record
         .push_aux(
             b"md",
