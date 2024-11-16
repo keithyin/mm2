@@ -70,25 +70,6 @@ pub fn build_aligner(
     aligners
 }
 
-pub fn index_ref_file() {}
-
-pub fn query2ref_align(
-    query_files: &Vec<&str>,
-    ref_file: Option<&str>,
-    indexed_ref_file: Option<&str>,
-    oup_filename: &str,
-    mut aligner: Aligner,
-    threads: usize,
-) {
-    if ref_file.is_none() && indexed_ref_file.is_none() {
-        panic!("ref_file and indexed_ref_file cannot all be none");
-    }
-
-    if indexed_ref_file.is_some() {
-    } else {
-    }
-}
-
 pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
     let mut file_idx = 0;
     for filename in filenames {
@@ -107,7 +88,7 @@ pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
                 sender.send(record).unwrap();
             }
         } else if filename.ends_with("bam") {
-            let mut bam_h = rust_htslib::bam::Reader::from_path(filename).unwrap();
+            let mut bam_h = BamReader::from_path(filename).unwrap();
             bam_h.set_threads(4).unwrap();
             for record in bam_h.records() {
                 let record = record.unwrap();
@@ -119,7 +100,10 @@ pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
                     .unwrap();
             }
         } else {
-            panic!("invalid file format {}. bam/fa/fasta/fna supported", filename);
+            panic!(
+                "invalid file format {}. bam/fa/fasta/fna supported",
+                filename
+            );
         }
 
         file_idx += 1;
