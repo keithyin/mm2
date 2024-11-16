@@ -97,7 +97,7 @@ pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
         } else {
             Some(format!("__{}", file_idx))
         };
-        if filename.ends_with("fa") || filename.ends_with("fasta") {
+        if filename.ends_with("fa") || filename.ends_with("fasta") || filename.ends_with("fna") {
             let fasta_reader = FastaFileReader::new(filename.clone());
 
             for mut record in fasta_reader {
@@ -118,6 +118,8 @@ pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
                     ))
                     .unwrap();
             }
+        } else {
+            panic!("invalid file format {}. bam/fa/fasta/fna supported", filename);
         }
 
         file_idx += 1;
