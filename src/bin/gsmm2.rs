@@ -31,6 +31,11 @@ fn alignment(preset: &str, args: &ReadsToRefAlignArgs) {
         &targets,
     );
 
+    /*
+        1. query_seq_sender
+        2. align
+        3. write to bam
+     */
     thread::scope(|s| {
         let aligners = &aligners;
         let target2idx = &target2idx;
