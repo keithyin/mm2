@@ -1,17 +1,14 @@
 pub mod cli;
 pub mod dna;
 pub mod fille_reader;
+pub mod bam_record_ext;
 use std::{collections::HashMap, thread};
 
 use cli::{AlignArgs, IndexArgs, MapArgs, OupArgs, TOverrideAlignerParam};
 use crossbeam::channel::{Receiver, Sender};
 use fille_reader::{FastaFileReader, QueryRecord};
 use minimap2::Aligner;
-use rust_htslib::bam::{
-    header::HeaderRecord,
-    record::{Cigar, CigarString},
-    Header, Read,
-};
+use rust_htslib::bam::{header::HeaderRecord, record::{Cigar, CigarString}, Header, Read};
 
 type BamRecord = rust_htslib::bam::record::Record;
 type BamWriter = rust_htslib::bam::Writer;
@@ -118,7 +115,9 @@ pub fn align_worker(
 ) {
     for query_record in query_record_recv {
         let records = align_single_query_to_targets(&query_record, aligners, target_idx);
-        align_res_sender.send(SingleQueryAlignResult{records}).unwrap();
+        align_res_sender
+            .send(SingleQueryAlignResult { records })
+            .unwrap();
     }
 }
 
@@ -139,6 +138,10 @@ pub fn align_single_query_to_targets(
             )
             .unwrap()
         {
+            if hit.alignment.is_none() {
+                continue;
+            }
+
             let record = build_bam_record_from_mapping(&hit, query_record, target_idx);
             align_records.push(record);
         }
@@ -183,6 +186,9 @@ pub fn build_bam_record_from_mapping(
     query_record: &QueryRecord,
     target_idx: &HashMap<String, (usize, usize)>,
 ) -> BamRecord {
+
+    // println!("{:?}", hit);
+
     let mut bam_record = BamRecord::new();
 
     let mut seq = &query_record.sequence;
@@ -192,6 +198,7 @@ pub fn build_bam_record_from_mapping(
     };
     if rev_seq.is_some() {
         seq = rev_seq.as_ref().unwrap();
+        bam_record.set_reverse();
     }
 
     let aln_info = hit.alignment.as_ref().unwrap();
@@ -209,14 +216,28 @@ pub fn build_bam_record_from_mapping(
         &vec![255; seq.len()],
     );
 
+    // reference start
+    bam_record.set_pos(hit.target_start as i64);
+    bam_record.set_mpos(-1);
+    // bam_record.set_mpos(mpos);
+    // bam_record.reference_end()
+    bam_record.set_mapq(hit.mapq as u8);
+
     bam_record.set_tid(target_idx.get(hit.target_name.as_ref().unwrap()).unwrap().0 as i32);
+    bam_record.set_mtid(-1);
 
     if !hit.is_primary {
         bam_record.set_secondary();
+    } else {
+        bam_record.unset_secondary();
     }
+
     if hit.is_supplementary {
         bam_record.set_supplementary();
+    } else {
+        bam_record.unset_supplementary();
     }
+    bam_record.unset_unmapped();
 
     bam_record
         .push_aux(
@@ -267,12 +288,23 @@ fn convert_mapping_cigar_to_record_cigar(
     if query_end != query_len {
         cigar_str.push(Cigar::SoftClip((query_len - query_end) as u32));
     }
-
     cigar_str
+}
+
+/// {"target_name": (idx, length)}
+fn targets_to_targetsidx(targets: &Vec<QueryRecord>) -> HashMap<String, (usize, usize)> {
+    let mut target2idx = HashMap::new();
+    targets.iter().enumerate().for_each(|(idx, target)| {
+        target2idx.insert(target.qname.clone(), (idx, target.sequence.len()));
+    });
+    target2idx
 }
 
 #[cfg(test)]
 mod tests {
+    use bam_record_ext::record2str;
+    use fille_reader::read_fasta;
+
     use super::*;
 
     #[test]
@@ -281,5 +313,27 @@ mod tests {
     }
 
     #[test]
-    fn hello() {}
+    fn test_align_single_query_to_target() {
+        let ref_file = "test_data/GCF_000005845.2_ASM584v2_genomic.fna";
+        let targets = read_fasta(ref_file).unwrap();
+        let aligners = build_aligner(
+            "map-ont",
+            &IndexArgs::default(),
+            &MapArgs::default(),
+            &AlignArgs::default(),
+            &OupArgs::default(),
+            &targets,
+        );
+        let target2idx = targets_to_targetsidx(&targets);
+
+        let query_file = "test_data/ecoli_query.fa";
+        let query_filter_iter = FastaFileReader::new(query_file.to_string());
+        for qr in query_filter_iter {
+            let records = align_single_query_to_targets(&qr, &aligners, &target2idx);
+            for record in records {
+                println!("{:?}", record2str(&record));
+            }
+        }
+
+    }
 }

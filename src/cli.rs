@@ -33,7 +33,7 @@ pub enum Commands {
     S2S(Sbreads2SmcAlignArgs)
 }
 
-#[derive(Debug, Args, Clone, Copy)]
+#[derive(Debug, Args, Clone, Copy, Default)]
 pub struct IndexArgs {
     #[arg(long, help="minimizer kmer")]
     pub kmer: Option<usize>,
@@ -101,9 +101,10 @@ pub struct IoArgs {
     based on the order of the filenames", required=true)]
     pub query: Vec<String>,
 
-    #[arg(long="target", group="target")]
+    // , group="target"
+    #[arg(long="target")]
     pub target: Option<String>,
-    #[arg(long="indexedTarget", group="target")]
+    #[arg(long="indexedTarget")]
     pub indexed_target: Option<String>,
 
     #[arg(short='p', help="output a file named ${p}.bam", required=true)]
@@ -116,7 +117,7 @@ impl IoArgs {
     }
 }
 
-#[derive(Debug, Args, Clone)]
+#[derive(Debug, Args, Clone, Default)]
 pub struct MapArgs {
     
 }
@@ -127,7 +128,7 @@ impl TOverrideAlignerParam for  MapArgs {
     }
 }
 
-#[derive(Debug, Args, Clone)]
+#[derive(Debug, Args, Clone, Default)]
 pub struct AlignArgs {
     #[arg(short='m', help="matching_score>=0, recommend 2")]
     matching_score: Option<i32>,
@@ -175,7 +176,7 @@ impl TOverrideAlignerParam for AlignArgs {
 }
 
 
-#[derive(Debug, Args, Clone)]
+#[derive(Debug, Args, Clone, Default)]
 pub struct OupArgs {
 
     #[arg(long="noSeco", help="discard secondary alignment")]
