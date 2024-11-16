@@ -2,6 +2,13 @@
 use std::str::FromStr;
 
 use clap::{self, Parser, Subcommand, Args};
+use minimap2::Aligner;
+
+pub trait TOverrideAlignerParam {
+    
+    fn modify_aligner(&self, aligner: &mut Aligner);
+
+}
 
 #[derive(Debug, Parser, Clone)]
 #[command(version, about, long_about=None)]
@@ -29,10 +36,21 @@ pub enum Commands {
 #[derive(Debug, Args, Clone, Copy)]
 pub struct IndexArgs {
     #[arg(long, help="minimizer kmer")]
-    kmer: Option<usize>,
+    pub kmer: Option<usize>,
 
     #[arg(long, help="minimizer window size")]
-    wins: Option<usize>,
+    pub wins: Option<usize>,
+}
+
+impl TOverrideAlignerParam for IndexArgs {
+    fn modify_aligner(&self, aligner: &mut Aligner) {
+        if let Some(k) = self.kmer {
+            aligner.idxopt.k = k as i16;
+        }
+        if let Some(w) = self.wins {
+            aligner.idxopt.w = w as i16;
+        }
+    }
 }
 
 #[derive(Debug, Args, Clone)]
@@ -88,7 +106,7 @@ pub struct IoArgs {
     #[arg(long="indexedTarget", group="target")]
     pub indexed_target: Option<String>,
 
-    #[arg(short='p', help="output a file named ${p}.bam")]
+    #[arg(short='p', help="output a file named ${p}.bam", required=true)]
     pub prefix: String
 }
 
@@ -101,6 +119,12 @@ impl IoArgs {
 #[derive(Debug, Args, Clone)]
 pub struct MapArgs {
     
+}
+
+impl TOverrideAlignerParam for  MapArgs {
+    fn modify_aligner(&self, aligner: &mut Aligner) {
+        
+    }
 }
 
 #[derive(Debug, Args, Clone)]
@@ -116,6 +140,38 @@ pub struct AlignArgs {
 
     #[arg(short='e', help="gap_extension_penalty >=0, recommend 2,1")]
     gap_extension_penalty: Option<String>,
+}
+
+impl TOverrideAlignerParam for AlignArgs {
+    fn modify_aligner(&self, aligner: &mut Aligner) {
+        if let Some(m) = self.matching_score {
+            aligner.mapopt.a = m;
+        }
+
+        if let Some(mm) = self.mismatch_penalty {
+            aligner.mapopt.b = mm;
+        }
+
+        if let Some(gap_o) = &self.gap_open_penalty {
+            if gap_o.contains(",") {
+                let (o1, o2) = gap_o.rsplit_once(".").unwrap();
+                aligner.mapopt.q = o1.parse::<i32>().unwrap();
+                aligner.mapopt.q2 = o2.parse::<i32>().unwrap();
+            } else {
+                aligner.mapopt.q = gap_o.parse::<i32>().unwrap();
+            }
+        }
+
+        if let Some(gap_e) = &self.gap_extension_penalty {
+            if gap_e.contains(",") {
+                let (e1, e2) = gap_e.rsplit_once(".").unwrap();
+                aligner.mapopt.e = e1.parse::<i32>().unwrap();
+                aligner.mapopt.e2 = e2.parse::<i32>().unwrap();
+            } else {
+                aligner.mapopt.e = gap_e.parse::<i32>().unwrap();
+            }
+        }
+    }
 }
 
 
@@ -142,4 +198,12 @@ pub struct OupArgs {
 
     #[arg(long="oupCovT", default_value_t=0.0, help="remove the record from the result bam file when the coverage < coverage_threshold")]
     oup_coverage_threshold: f32,
+}
+
+impl TOverrideAlignerParam for OupArgs {
+    fn modify_aligner(&self, aligner: &mut Aligner) {
+        if self.discard_secondary {
+            aligner.mapopt.flag &=  !0x1000000000;
+        }
+    }
 }

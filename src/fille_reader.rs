@@ -11,10 +11,14 @@ pub struct QueryRecord {
 }
 
 impl QueryRecord {
-    pub fn from_bam_record(record: &rust_htslib::bam::Record) -> Self {
-        let qname = unsafe {
+    pub fn from_bam_record(record: &rust_htslib::bam::Record, qname_suffix: Option<&str>) -> Self {
+        let mut qname = unsafe {
             String::from_utf8_unchecked(record.qname().to_vec())
         };
+        if let Some(suffix) = qname_suffix {
+            qname.push_str(suffix);
+
+        }
 
         let seq = unsafe {
             String::from_utf8_unchecked(record.seq().as_bytes())

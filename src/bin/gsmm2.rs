@@ -2,7 +2,7 @@ use std::{collections::HashMap, thread};
 
 use clap::Parser;
 use mm2::{
-    aligner, bam_writer, build_aligner,
+    align_worker, write_bam_worker, build_aligner,
     cli::{self, ReadsToRefAlignArgs},
     fille_reader::read_fasta,
     query_seq_sender,
@@ -27,6 +27,7 @@ fn alignment(preset: &str, args: &ReadsToRefAlignArgs) {
         &args.index_args,
         &args.map_args,
         &args.align_args,
+        &args.oup_args,
         &targets,
     );
 
@@ -44,12 +45,12 @@ fn alignment(preset: &str, args: &ReadsToRefAlignArgs) {
         for _ in 0..num_threads {
             let qs_recv_ = qs_recv.clone();
             let align_res_sender_ = align_res_sender.clone();
-            s.spawn(move || aligner(qs_recv_, align_res_sender_, aligners));
+            s.spawn(move || align_worker(qs_recv_, align_res_sender_, aligners));
         }
         drop(qs_recv);
         drop(align_res_sender);
 
-        bam_writer(align_res_recv, target2idx, &args.io_args.get_oup_path());
+        write_bam_worker(align_res_recv, target2idx, &args.io_args.get_oup_path());
     });
 }
 
