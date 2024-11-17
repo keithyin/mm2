@@ -4,6 +4,8 @@ use std::str::FromStr;
 use clap::{self, Parser, Subcommand, Args};
 use minimap2::Aligner;
 
+use crate::BamRecord;
+
 pub trait TOverrideAlignerParam {
     
     fn modify_aligner(&self, aligner: &mut Aligner);
@@ -206,5 +208,22 @@ impl TOverrideAlignerParam for OupArgs {
         if self.discard_secondary {
             aligner.mapopt.flag &=  !0x1000000000;
         }
+    }
+
+}
+
+impl OupArgs {
+    pub fn valid(&self, record: &BamRecord) -> bool {
+
+        if self.discard_secondary && record.is_secondary(){
+            return false;
+        }
+
+        if self.discard_supplementary && record.is_supplementary() {
+            return false;
+        }
+
+        return true;
+
     }
 }

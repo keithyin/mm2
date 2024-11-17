@@ -51,7 +51,7 @@ fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignA
         drop(qs_recv);
         drop(align_res_sender);
 
-        write_bam_worker(align_res_recv, target2idx, &args.io_args.get_oup_path());
+        write_bam_worker(align_res_recv, target2idx, &args.io_args.get_oup_path(), &args.oup_args);
     });
 }
 

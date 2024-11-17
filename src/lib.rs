@@ -1,14 +1,18 @@
+pub mod bam_record_ext;
 pub mod cli;
 pub mod dna;
 pub mod fille_reader;
-pub mod bam_record_ext;
 use std::{collections::HashMap, thread};
 
 use cli::{AlignArgs, IndexArgs, MapArgs, OupArgs, TOverrideAlignerParam};
 use crossbeam::channel::{Receiver, Sender};
 use fille_reader::{FastaFileReader, QueryRecord};
 use minimap2::Aligner;
-use rust_htslib::bam::{header::HeaderRecord, record::{Cigar, CigarString}, Header, Read};
+use rust_htslib::bam::{
+    header::HeaderRecord,
+    record::{Cigar, CigarString},
+    Header, Read,
+};
 
 type BamRecord = rust_htslib::bam::record::Record;
 type BamWriter = rust_htslib::bam::Writer;
@@ -155,6 +159,7 @@ pub fn write_bam_worker(
     recv: Receiver<SingleQueryAlignResult>,
     target_idx: &HashMap<String, (usize, usize)>,
     o_path: &str,
+    oup_args: &OupArgs,
 ) {
     let mut header = Header::new();
     let mut hd = HeaderRecord::new(b"HD");
@@ -176,7 +181,9 @@ pub fn write_bam_worker(
     writer.set_threads(4).unwrap();
     for align_res in recv {
         for record in align_res.records {
-            writer.write(&record).unwrap();
+            if oup_args.valid(&record) {
+                writer.write(&record).unwrap();
+            }
         }
     }
 }
@@ -186,7 +193,6 @@ pub fn build_bam_record_from_mapping(
     query_record: &QueryRecord,
     target_idx: &HashMap<String, (usize, usize)>,
 ) -> BamRecord {
-
     // println!("{:?}", hit);
 
     let mut bam_record = BamRecord::new();
