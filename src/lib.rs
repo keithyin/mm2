@@ -292,7 +292,7 @@ fn convert_mapping_cigar_to_record_cigar(
 }
 
 /// {"target_name": (idx, length)}
-fn targets_to_targetsidx(targets: &Vec<QueryRecord>) -> HashMap<String, (usize, usize)> {
+pub fn targets_to_targetsidx(targets: &Vec<QueryRecord>) -> HashMap<String, (usize, usize)> {
     let mut target2idx = HashMap::new();
     targets.iter().enumerate().for_each(|(idx, target)| {
         target2idx.insert(target.qname.clone(), (idx, target.sequence.len()));
@@ -306,11 +306,6 @@ mod tests {
     use fille_reader::read_fasta;
 
     use super::*;
-
-    #[test]
-    fn it_works() {
-        println!("hello world");
-    }
 
     #[test]
     fn test_align_single_query_to_target() {
@@ -334,6 +329,5 @@ mod tests {
                 println!("{:?}", record2str(&record));
             }
         }
-
     }
 }

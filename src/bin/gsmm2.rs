@@ -5,7 +5,7 @@ use mm2::{
     align_worker, build_aligner,
     cli::{self, ReadsToRefAlignArgs},
     fille_reader::read_fasta,
-    query_seq_sender, write_bam_worker,
+    query_seq_sender, targets_to_targetsidx, write_bam_worker,
 };
 
 fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignArgs) {
@@ -16,11 +16,7 @@ fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignA
         .expect("target need to be provided");
 
     let targets = read_fasta(target_filename).unwrap();
-
-    let mut target2idx = HashMap::new();
-    targets.iter().enumerate().for_each(|(idx, target)| {
-        target2idx.insert(target.qname.clone(), (idx, target.sequence.len()));
-    });
+    let target2idx = targets_to_targetsidx(&targets);
 
     let aligners = build_aligner(
         preset,
@@ -64,7 +60,7 @@ fn main() {
 
     let preset = &args.preset;
     let align_threads = args.threads.clone();
-    
+
     match args.commands {
         cli::Commands::R2R(ref args) => {
             alignment(preset, align_threads, args);
