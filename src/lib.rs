@@ -151,6 +151,8 @@ pub fn align_single_query_to_targets(
         }
     }
 
+    set_primary_alignment(&mut align_records);
+
     align_records
 }
 
@@ -193,7 +195,7 @@ pub fn build_bam_record_from_mapping(
     query_record: &QueryRecord,
     target_idx: &HashMap<String, (usize, usize)>,
 ) -> BamRecord {
-    // println!("{:?}", hit);
+    println!("{:?}", hit);
 
     let mut bam_record = BamRecord::new();
 
@@ -306,6 +308,33 @@ pub fn targets_to_targetsidx(targets: &Vec<QueryRecord>) -> HashMap<String, (usi
     target2idx
 }
 
+pub fn set_primary_alignment(records: &mut Vec<BamRecord>) {
+    let mut primary_reocrds = records
+        .iter_mut()
+        .filter(|record| !record.is_secondary())
+        .collect::<Vec<_>>();
+    if primary_reocrds.len() == 1 {
+        return;
+    }
+
+    primary_reocrds.sort_by_key(|record| {
+        let matched = record
+            .cigar()
+            .iter()
+            .map(|cigar| match *cigar {
+                Cigar::Equal(n) | Cigar::Match(n) => n as i64,
+                _ => 0,
+            })
+            .reduce(|a, b| (a + b)).unwrap();
+        -matched
+    });
+
+    primary_reocrds.iter_mut().skip(1).for_each(|record| {
+        record.set_secondary();
+        // record.set_supplementary();
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use bam_record_ext::record2str;
@@ -335,5 +364,39 @@ mod tests {
                 println!("{:?}", record2str(&record));
             }
         }
+    }
+
+
+    #[test]
+    fn test_set_primary_alignment() {
+        let mut r1 = BamRecord::new();
+        r1.unset_secondary();
+        let mut cigar_str = CigarString(vec![]);
+        cigar_str.push(Cigar::Equal(3));
+        cigar_str.push(Cigar::Diff(1));
+        r1.set(b"1", Some(&cigar_str), b"AACG", &vec![255; 4]);
+
+        let mut r2 = BamRecord::new();
+        r2.unset_secondary();
+        let mut cigar_str = CigarString(vec![]);
+        cigar_str.push(Cigar::Equal(4));
+        r2.set(b"2", Some(&cigar_str), b"AACT", &vec![255; 4]);
+
+
+        let mut r3 = BamRecord::new();
+        r3.set_secondary();
+        let mut cigar_str = CigarString(vec![]);
+        cigar_str.push(Cigar::Equal(2));
+        cigar_str.push(Cigar::Diff(2));
+        r3.set(b"3", Some(&cigar_str), b"AAGC", &vec![255; 4]);
+
+        let mut records = vec![r1, r2, r3];
+
+        set_primary_alignment(&mut records);
+
+        for record in &records {
+            println!("primary: {}", !record.is_secondary());
+        }
+
     }
 }
