@@ -2,12 +2,14 @@ pub mod bam_record_ext;
 pub mod cli;
 pub mod dna;
 pub mod fille_reader;
+pub mod pb_tools;
 use std::{collections::HashMap, thread};
 
 use cli::{AlignArgs, IndexArgs, MapArgs, OupArgs, TOverrideAlignerParam};
 use crossbeam::channel::{Receiver, Sender};
 use fille_reader::{FastaFileReader, QueryRecord};
 use minimap2::Aligner;
+use pb_tools::DEFAULT_INTERVAL;
 use rust_htslib::bam::{
     header::HeaderRecord,
     record::{Cigar, CigarString},
@@ -162,6 +164,7 @@ pub fn write_bam_worker(
     target_idx: &HashMap<String, (usize, usize)>,
     o_path: &str,
     oup_args: &OupArgs,
+    enable_pb: bool
 ) {
     let mut header = Header::new();
     let mut hd = HeaderRecord::new(b"HD");
@@ -179,15 +182,25 @@ pub fn write_bam_worker(
         header.push_record(&hd);
     }
 
+    let pb = if enable_pb {
+        Some(pb_tools::get_spin_pb(format!("writing alignment result"), DEFAULT_INTERVAL))
+    }else {
+        None
+    };
+
     let mut writer = BamWriter::from_path(o_path, &header, rust_htslib::bam::Format::Bam).unwrap();
     writer.set_threads(4).unwrap();
+    
     for align_res in recv {
+        pb.as_ref().unwrap().inc(1);
         for record in align_res.records {
             if oup_args.valid(&record) {
                 writer.write(&record).unwrap();
             }
         }
     }
+    pb.as_ref().unwrap().finish();
+
 }
 
 pub fn build_bam_record_from_mapping(
