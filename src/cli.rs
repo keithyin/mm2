@@ -21,8 +21,6 @@ pub struct Cli {
     #[arg(long="preset", default_value_t=String::from_str("map-ont").unwrap())]
     pub preset: String,
 
-
-
     #[command(subcommand)]
     pub commands: Commands
 

@@ -1,11 +1,8 @@
-use std::{collections::HashMap, thread};
+use std::thread;
 
 use clap::Parser;
 use mm2::{
-    align_worker, build_aligner,
-    cli::{self, ReadsToRefAlignArgs},
-    fille_reader::read_fasta,
-    query_seq_sender, targets_to_targetsidx, write_bam_worker,
+    align_worker, build_aligner, cli::{self, ReadsToRefAlignArgs}, fille_reader::read_fasta, query_seq_sender, samtools::samtools_bai, targets_to_targetsidx, write_bam_worker
 };
 
 fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignArgs) {
@@ -28,9 +25,9 @@ fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignA
     );
 
     /*
-       1. query_seq_sender
-       2. align
-       3. write to bam
+    1. query_seq_sender
+    2. align
+    3. write to bam
     */
     thread::scope(|s| {
         let aligners = &aligners;
@@ -53,6 +50,9 @@ fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignA
 
         write_bam_worker(align_res_recv, target2idx, &args.io_args.get_oup_path(), &args.oup_args, true);
     });
+
+    samtools_bai(&args.io_args.get_oup_path(), true).unwrap();
+
 }
 
 fn main() {

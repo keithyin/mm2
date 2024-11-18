@@ -3,6 +3,8 @@ pub mod cli;
 pub mod dna;
 pub mod fille_reader;
 pub mod pb_tools;
+pub mod samtools;
+
 use std::{collections::HashMap, fs, io::BufReader, thread};
 
 use cli::{AlignArgs, IndexArgs, MapArgs, OupArgs, TOverrideAlignerParam};
@@ -110,7 +112,7 @@ pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
 
             for FastqRecord(qname ,seq, _) in fastq_iter {
                 let mut record = QueryRecord { qname: qname, sequence: seq };
-                
+
                 if let Some(suffix) = &qname_suffix {
                     record.qname.push_str(suffix);
                 }
