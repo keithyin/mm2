@@ -2,5 +2,5 @@
 ```
 cargo install mm2
 
-gsmm2 align -q query.fa -r target.fa -p query2target
+gsmm2 align -q query.fa --target target.fa -p query2target
 ```
