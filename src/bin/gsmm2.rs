@@ -61,8 +61,8 @@ fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignA
             true,
         );
     });
-    sort_by_coordinates(&args.io_args.get_oup_path());
-    samtools_bai(&args.io_args.get_oup_path(), true).unwrap();
+    sort_by_coordinates(&args.io_args.get_oup_path(), align_threads);
+    samtools_bai(&args.io_args.get_oup_path(), true, align_threads).unwrap();
 }
 
 fn main() {
