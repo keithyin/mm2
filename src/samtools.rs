@@ -49,3 +49,22 @@ pub fn samtools_bai(bam_file: &str, force: bool) -> anyhow::Result<()> {
 
     Ok(())
 }
+
+pub fn sort_by_coordinates(bam_file: &str) {
+
+    let out_bam = format!("{}.tmp", bam_file);
+
+    let mut cmd = Command::new("samtools");
+    cmd.args(["sort", "-o", out_bam.as_str(), "-@", "40", bam_file]);
+
+    let oup = cmd.output().expect(&format!("sort {} error", bam_file));
+    if !oup.status.success() {
+        panic!(
+            "sort {} error. {}",
+            bam_file,
+            String::from_utf8(oup.stderr).unwrap()
+        );
+    }
+    
+    fs::rename(out_bam, bam_file).unwrap();
+}
