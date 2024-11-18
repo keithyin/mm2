@@ -2,7 +2,12 @@ use std::thread;
 
 use clap::Parser;
 use mm2::{
-    align_worker, build_aligner, cli::{self, ReadsToRefAlignArgs}, fille_reader::read_fasta, query_seq_sender, samtools::{samtools_bai, sort_by_coordinates}, targets_to_targetsidx, write_bam_worker
+    align_worker, build_aligner,
+    cli::{self, ReadsToRefAlignArgs},
+    fille_reader::read_fasta,
+    query_seq_sender,
+    samtools::{samtools_bai, sort_by_coordinates},
+    targets_to_targetsidx, write_bam_worker,
 };
 
 fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignArgs) {
@@ -48,11 +53,16 @@ fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignA
         drop(qs_recv);
         drop(align_res_sender);
 
-        write_bam_worker(align_res_recv, target2idx, &args.io_args.get_oup_path(), &args.oup_args, true);
+        write_bam_worker(
+            align_res_recv,
+            target2idx,
+            &args.io_args.get_oup_path(),
+            &args.oup_args,
+            true,
+        );
     });
     sort_by_coordinates(&args.io_args.get_oup_path());
     samtools_bai(&args.io_args.get_oup_path(), true).unwrap();
-
 }
 
 fn main() {
@@ -62,7 +72,7 @@ fn main() {
     let align_threads = args.threads.clone();
 
     match args.commands {
-        cli::Commands::R2R(ref args) => {
+        cli::Commands::Align(ref args) => {
             alignment(preset, align_threads, args);
         }
 

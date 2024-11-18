@@ -1,44 +1,39 @@
-
 use std::str::FromStr;
 
-use clap::{self, Parser, Subcommand, Args};
+use clap::{self, Args, Parser, Subcommand};
 use minimap2::Aligner;
 
 use crate::BamRecord;
 
 pub trait TOverrideAlignerParam {
-    
     fn modify_aligner(&self, aligner: &mut Aligner);
-
 }
 
 #[derive(Debug, Parser, Clone)]
 #[command(version, about, long_about=None)]
 pub struct Cli {
-    #[arg(long="threads")]
+    #[arg(long = "threads")]
     pub threads: Option<usize>,
-    
+
     #[arg(long="preset", default_value_t=String::from_str("map-ont").unwrap())]
     pub preset: String,
 
     #[command(subcommand)]
-    pub commands: Commands
-
+    pub commands: Commands,
 }
 
 #[derive(Debug, Subcommand, Clone)]
 pub enum Commands {
     Index(IndexArgs),
-    R2R(ReadsToRefAlignArgs),
-    S2S(Sbreads2SmcAlignArgs)
+    Align(ReadsToRefAlignArgs),
 }
 
 #[derive(Debug, Args, Clone, Copy, Default)]
 pub struct IndexArgs {
-    #[arg(long, help="minimizer kmer")]
+    #[arg(long, help = "minimizer kmer")]
     pub kmer: Option<usize>,
 
-    #[arg(long, help="minimizer window size")]
+    #[arg(long, help = "minimizer window size")]
     pub wins: Option<usize>,
 }
 
@@ -55,7 +50,6 @@ impl TOverrideAlignerParam for IndexArgs {
 
 #[derive(Debug, Args, Clone)]
 pub struct ReadsToRefAlignArgs {
-
     #[command(flatten)]
     pub io_args: IoArgs,
 
@@ -69,46 +63,29 @@ pub struct ReadsToRefAlignArgs {
     pub align_args: AlignArgs,
 
     #[command(flatten)]
-    pub oup_args: OupArgs
-
+    pub oup_args: OupArgs,
 }
-
-#[derive(Debug, Args, Clone)]
-pub struct Sbreads2SmcAlignArgs {
-    #[command(flatten)]
-    io_args: IoArgs,
-
-    #[command(flatten)]
-    index_args: IndexArgs,
-
-    #[command(flatten)]
-    map_args: MapArgs,
-
-    #[command(flatten)]
-    align_args: AlignArgs,
-
-    #[command(flatten)]
-    oup_args: OupArgs
-}
-
 
 #[derive(Debug, Args, Clone)]
 pub struct IoArgs {
-
-    #[arg(short='q', help="query file paths, 
+    #[arg(
+        short = 'q',
+        help = "query file paths, 
     if multiple query_filepath are provided, 
     their query_names will be rewriten to ___0, ___1, and so on, 
-    based on the order of the filenames", required=true)]
+    based on the order of the filenames",
+        required = true
+    )]
     pub query: Vec<String>,
 
     // , group="target"
-    #[arg(long="target")]
+    #[arg(long = "target")]
     pub target: Option<String>,
-    #[arg(long="indexedTarget")]
+    #[arg(long = "indexedTarget")]
     pub indexed_target: Option<String>,
 
-    #[arg(short='p', help="output a file named ${p}.bam", required=true)]
-    pub prefix: String
+    #[arg(short = 'p', help = "output a file named ${p}.bam", required = true)]
+    pub prefix: String,
 }
 
 impl IoArgs {
@@ -118,28 +95,24 @@ impl IoArgs {
 }
 
 #[derive(Debug, Args, Clone, Default)]
-pub struct MapArgs {
-    
-}
+pub struct MapArgs {}
 
-impl TOverrideAlignerParam for  MapArgs {
-    fn modify_aligner(&self, aligner: &mut Aligner) {
-        
-    }
+impl TOverrideAlignerParam for MapArgs {
+    fn modify_aligner(&self, _aligner: &mut Aligner) {}
 }
 
 #[derive(Debug, Args, Clone, Default)]
 pub struct AlignArgs {
-    #[arg(short='m', help="matching_score>=0, recommend 2")]
+    #[arg(short = 'm', help = "matching_score>=0, recommend 2")]
     matching_score: Option<i32>,
 
-    #[arg(short='M', help="mismatch_penalty >=0, recommend 4")]
+    #[arg(short = 'M', help = "mismatch_penalty >=0, recommend 4")]
     mismatch_penalty: Option<i32>,
 
-    #[arg(short='o', help="gap_open_penalty >=0, recommend 4,24")]
+    #[arg(short = 'o', help = "gap_open_penalty >=0, recommend 4,24")]
     gap_open_penalty: Option<String>,
 
-    #[arg(short='e', help="gap_extension_penalty >=0, recommend 2,1")]
+    #[arg(short = 'e', help = "gap_extension_penalty >=0, recommend 2,1")]
     gap_extension_penalty: Option<String>,
 }
 
@@ -175,45 +148,32 @@ impl TOverrideAlignerParam for AlignArgs {
     }
 }
 
-
 #[derive(Debug, Args, Clone, Default)]
 pub struct OupArgs {
+    #[arg(long = "noSeco", help = "discard secondary alignment")]
+    pub discard_secondary: bool,
 
-    #[arg(long="noSeco", help="discard secondary alignment")]
-    discard_secondary: bool,
+    #[arg(long = "noSupp", help = "discard supplementary alignment")]
+    pub discard_supplementary: bool,
 
-    #[arg(long="noSupp", help="discard supplementary alignment")]
-    discard_supplementary: bool,
+    #[arg(long="oupIyT", default_value_t=-1.0, help="remove the record from the result bam file when the identity < identity_threshold")]
+    pub oup_identity_threshold: f32,
 
-    #[arg(long="noMD", help="do not add MD to the final bam record")]
-    no_md: bool,
-
-    #[arg(long="noBai", help="do not generate bai file")]
-    no_bai: bool,
-
-    #[arg(long="noExtraInfo", help="don't append ch/np/iy... to result bam")]
-    no_extra_info: bool,
-
-    #[arg(long="oupIyT", default_value_t=0.0, help="remove the record from the result bam file when the identity < identity_threshold")]
-    oup_identity_threshold: f32,
-
-    #[arg(long="oupCovT", default_value_t=0.0, help="remove the record from the result bam file when the coverage < coverage_threshold")]
-    oup_coverage_threshold: f32,
+    #[arg(long="oupCovT", default_value_t=-1.0, help="remove the record from the result bam file when the coverage < coverage_threshold")]
+    pub oup_coverage_threshold: f32,
 }
 
 impl TOverrideAlignerParam for OupArgs {
     fn modify_aligner(&self, aligner: &mut Aligner) {
         if self.discard_secondary {
-            aligner.mapopt.flag &=  !0x1000000000;
+            aligner.mapopt.flag &= !0x1000000000;
         }
     }
-
 }
 
 impl OupArgs {
     pub fn valid(&self, record: &BamRecord) -> bool {
-
-        if self.discard_secondary && record.is_secondary(){
+        if self.discard_secondary && record.is_secondary() {
             return false;
         }
 
@@ -222,6 +182,5 @@ impl OupArgs {
         }
 
         return true;
-
     }
 }

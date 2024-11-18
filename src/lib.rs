@@ -7,6 +7,7 @@ pub mod samtools;
 
 use std::{collections::HashMap, fs, io::BufReader, thread};
 
+use bam_record_ext::BamRecordExt;
 use cli::{AlignArgs, IndexArgs, MapArgs, OupArgs, TOverrideAlignerParam};
 use crossbeam::channel::{Receiver, Sender};
 use fille_reader::{FastaFileReader, FastqReaderIter, FastqRecord, QueryRecord};
@@ -14,13 +15,13 @@ use minimap2::Aligner;
 use pb_tools::DEFAULT_INTERVAL;
 use rust_htslib::bam::{
     header::HeaderRecord,
-    record::{Cigar, CigarString},
+    record::{Aux, Cigar, CigarString},
     Header, Read,
 };
 
-type BamRecord = rust_htslib::bam::record::Record;
-type BamWriter = rust_htslib::bam::Writer;
-type BamReader = rust_htslib::bam::Reader;
+pub type BamRecord = rust_htslib::bam::record::Record;
+pub type BamWriter = rust_htslib::bam::Writer;
+pub type BamReader = rust_htslib::bam::Reader;
 
 pub struct SingleQueryAlignResult {
     pub records: Vec<BamRecord>,
@@ -92,7 +93,6 @@ pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
                 }
                 sender.send(record).unwrap();
             }
-        
         } else if filename.ends_with("bam") {
             let mut bam_h = BamReader::from_path(filename).unwrap();
             bam_h.set_threads(4).unwrap();
@@ -110,8 +110,13 @@ pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
             let mut buf_reader = BufReader::new(fastq_file);
             let fastq_iter = FastqReaderIter::new(&mut buf_reader);
 
-            for FastqRecord(qname ,seq, _) in fastq_iter {
-                let mut record = QueryRecord { qname: qname, sequence: seq };
+            for FastqRecord(qname, seq, _) in fastq_iter {
+                let mut record = QueryRecord {
+                    qname: qname,
+                    sequence: seq,
+                    ch: None,
+                    np: None,
+                };
 
                 if let Some(suffix) = &qname_suffix {
                     record.qname.push_str(suffix);
@@ -180,7 +185,7 @@ pub fn write_bam_worker(
     target_idx: &HashMap<String, (usize, usize)>,
     o_path: &str,
     oup_args: &OupArgs,
-    enable_pb: bool
+    enable_pb: bool,
 ) {
     let mut header = Header::new();
     let mut hd = HeaderRecord::new(b"HD");
@@ -199,24 +204,41 @@ pub fn write_bam_worker(
     }
 
     let pb = if enable_pb {
-        Some(pb_tools::get_spin_pb(format!("writing alignment result"), DEFAULT_INTERVAL))
-    }else {
+        Some(pb_tools::get_spin_pb(
+            format!("writing alignment result"),
+            DEFAULT_INTERVAL,
+        ))
+    } else {
         None
     };
 
     let mut writer = BamWriter::from_path(o_path, &header, rust_htslib::bam::Format::Bam).unwrap();
     writer.set_threads(4).unwrap();
-    
+
     for align_res in recv {
         pb.as_ref().unwrap().inc(1);
-        for record in align_res.records {
+        for mut record in align_res.records {
             if oup_args.valid(&record) {
+                let record_ext = BamRecordExt::new(&record);
+                let iy = record_ext.compute_identity();
+                let ec = record_ext.compute_query_coverage();
+
+                if iy < oup_args.oup_identity_threshold {
+                    continue;
+                }
+
+                if ec < oup_args.oup_coverage_threshold {
+                    continue;
+                }
+
+                record.push_aux(b"iy", Aux::Float(iy)).unwrap();
+                record.push_aux(b"ec", Aux::Float(ec)).unwrap();
+
                 writer.write(&record).unwrap();
             }
         }
     }
     pb.as_ref().unwrap().finish();
-
 }
 
 pub fn build_bam_record_from_mapping(
@@ -278,19 +300,17 @@ pub fn build_bam_record_from_mapping(
     }
     bam_record.unset_unmapped();
 
-    bam_record
-        .push_aux(
-            b"cs",
-            rust_htslib::bam::record::Aux::String(aln_info.cs.as_ref().unwrap()),
-        )
-        .unwrap();
+    if let Some(cs) = aln_info.cs.as_ref() {
+        bam_record
+            .push_aux(b"cs", rust_htslib::bam::record::Aux::String(cs))
+            .unwrap();
+    }
 
-    bam_record
-        .push_aux(
-            b"md",
-            rust_htslib::bam::record::Aux::String(aln_info.md.as_ref().unwrap()),
-        )
-        .unwrap();
+    if let Some(md) = aln_info.md.as_ref() {
+        bam_record
+            .push_aux(b"md", rust_htslib::bam::record::Aux::String(md))
+            .unwrap();
+    }
 
     bam_record
 }

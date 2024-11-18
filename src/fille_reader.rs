@@ -2,30 +2,31 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
-
 /// 表示一个 FASTA 记录的结构体
 #[derive(Debug, PartialEq)]
 pub struct QueryRecord {
     pub qname: String,
     pub sequence: String,
+
+    pub ch: Option<usize>,
+    pub np: Option<usize>,
 }
 
 impl QueryRecord {
     pub fn from_bam_record(record: &rust_htslib::bam::Record, qname_suffix: Option<&str>) -> Self {
-        let mut qname = unsafe {
-            String::from_utf8_unchecked(record.qname().to_vec())
-        };
+        let mut qname = unsafe { String::from_utf8_unchecked(record.qname().to_vec()) };
         if let Some(suffix) = qname_suffix {
             qname.push_str(suffix);
-
         }
 
-        let seq = unsafe {
-            String::from_utf8_unchecked(record.seq().as_bytes())
-        };
+        let seq = unsafe { String::from_utf8_unchecked(record.seq().as_bytes()) };
 
-        Self { qname: qname, sequence: seq }
-
+        Self {
+            qname: qname,
+            sequence: seq,
+            ch: None,
+            np: None,
+        }
     }
 }
 
@@ -45,6 +46,8 @@ pub fn read_fasta<P: AsRef<Path>>(file_path: P) -> io::Result<Vec<QueryRecord>> 
                 records.push(QueryRecord {
                     qname: header,
                     sequence: current_sequence.clone(),
+                    ch: None,
+                    np: None,
                 });
                 current_sequence.clear();
             }
@@ -59,6 +62,8 @@ pub fn read_fasta<P: AsRef<Path>>(file_path: P) -> io::Result<Vec<QueryRecord>> 
         records.push(QueryRecord {
             qname: header,
             sequence: current_sequence,
+            ch: None,
+            np: None,
         });
     }
 
@@ -100,6 +105,8 @@ impl Iterator for FastaFileReader {
         let mut fasta_record = QueryRecord {
             qname: self.current_header.take().unwrap(),
             sequence: String::new(),
+            ch: None,
+            np: None,
         };
         while let Some(line) = self.lines.as_mut().unwrap().next() {
             let line = line.unwrap();
@@ -115,31 +122,26 @@ impl Iterator for FastaFileReader {
     }
 }
 
-
-
 // header, seq, qual
 #[derive(Debug)]
 pub struct FastqRecord(pub String, pub String, pub String);
 
 impl FastqRecord {
-
     pub fn eqaul(&self, other: &FastqRecord) -> bool {
         self.1.eq(&other.1) && self.2.eq(&other.2)
     }
-
 }
 
 pub struct FastqReaderIter<'a> {
     reader: &'a mut dyn BufRead,
 }
 
-impl<'a> FastqReaderIter<'a>{
+impl<'a> FastqReaderIter<'a> {
     pub fn new(reader: &'a mut dyn BufRead) -> Self {
-        Self { reader}
+        Self { reader }
     }
 
     fn read_one_line(&mut self) -> Option<String> {
-
         let mut line = String::new();
         if let Ok(n) = self.reader.read_line(&mut line) {
             if n == 0 {
@@ -151,46 +153,54 @@ impl<'a> FastqReaderIter<'a>{
         }
         return Some(line);
     }
-
 }
 
 impl<'a> Iterator for FastqReaderIter<'a> {
     type Item = FastqRecord;
     fn next(&mut self) -> Option<Self::Item> {
         let header = self.read_one_line();
-        if header.is_none() || header.as_ref().unwrap().trim().len() == 0{
+        if header.is_none() || header.as_ref().unwrap().trim().len() == 0 {
             return None;
         }
         let mut header = header.unwrap();
         if !header.starts_with("@") {
             panic!("header:'{}' not a valid fastq header", header);
         }
-        
+
         header = if let Some((v0, _)) = header.trim().split_once(" ") {
             v0[1..].to_string()
         } else {
             header[1..].to_string()
         };
 
-        let seq = self.read_one_line().expect("not a valid FastqRecord").trim().to_string();
-        let plus = self.read_one_line().expect("not a valid FastqRecord").trim().to_string();
-        
+        let seq = self
+            .read_one_line()
+            .expect("not a valid FastqRecord")
+            .trim()
+            .to_string();
+        let plus = self
+            .read_one_line()
+            .expect("not a valid FastqRecord")
+            .trim()
+            .to_string();
+
         if !plus.starts_with("+") {
             panic!("plus:'{}' not a valid fastq plus", plus);
         }
-        
-        let qual = self.read_one_line().expect("not a valid FastqRecord").trim().to_string();
+
+        let qual = self
+            .read_one_line()
+            .expect("not a valid FastqRecord")
+            .trim()
+            .to_string();
 
         Some(FastqRecord(header, seq, qual))
-
     }
 }
-
 
 #[cfg(test)]
 mod test {
     use super::{read_fasta, FastaFileReader};
-
 
     #[test]
     fn test_read_fasta() {
@@ -207,8 +217,5 @@ mod test {
 
         assert_eq!(reader.next().unwrap().sequence, "ATCGTACGTACGTACGTAGC");
         assert_eq!(reader.next().unwrap().sequence, "GGGTTTAAACCCGGGTTT");
-
-
     }
-
 }
