@@ -3,11 +3,11 @@ pub mod cli;
 pub mod dna;
 pub mod fille_reader;
 pub mod pb_tools;
-use std::{collections::HashMap, thread};
+use std::{collections::HashMap, fs, io::BufReader, thread};
 
 use cli::{AlignArgs, IndexArgs, MapArgs, OupArgs, TOverrideAlignerParam};
 use crossbeam::channel::{Receiver, Sender};
-use fille_reader::{FastaFileReader, QueryRecord};
+use fille_reader::{FastaFileReader, FastqReaderIter, FastqRecord, QueryRecord};
 use minimap2::Aligner;
 use pb_tools::DEFAULT_INTERVAL;
 use rust_htslib::bam::{
@@ -90,6 +90,7 @@ pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
                 }
                 sender.send(record).unwrap();
             }
+        
         } else if filename.ends_with("bam") {
             let mut bam_h = BamReader::from_path(filename).unwrap();
             bam_h.set_threads(4).unwrap();
@@ -101,6 +102,19 @@ pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
                         qname_suffix.as_ref().map(|v| v.as_str()),
                     ))
                     .unwrap();
+            }
+        } else if filename.ends_with("fq") || filename.ends_with("fastq") {
+            let fastq_file = fs::File::open(&filename).unwrap();
+            let mut buf_reader = BufReader::new(fastq_file);
+            let fastq_iter = FastqReaderIter::new(&mut buf_reader);
+
+            for FastqRecord(qname ,seq, _) in fastq_iter {
+                let mut record = QueryRecord { qname: qname, sequence: seq };
+                
+                if let Some(suffix) = &qname_suffix {
+                    record.qname.push_str(suffix);
+                }
+                sender.send(record).unwrap();
             }
         } else {
             panic!(
