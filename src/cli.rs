@@ -79,13 +79,14 @@ pub struct IoArgs {
     )]
     pub query: Vec<String>,
 
-    // , group="target"
-    #[arg(long = "target")]
+    /// align target. fasta
+    #[arg(long = "target", group="target_group")]
     pub target: Option<String>,
-    #[arg(long = "indexedTarget")]
+    /// mmi file
+    #[arg(long = "indexedTarget", group="target_group")]
     pub indexed_target: Option<String>,
 
-    #[arg(short = 'p', help = "output a file named ${p}.bam", required = true)]
+    #[arg(short = 'p', help = "output a file named ${p}.bam", required = true, requires="target_group")]
     pub prefix: String,
 }
 
