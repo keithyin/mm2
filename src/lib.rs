@@ -236,8 +236,10 @@ pub fn build_bam_record_from_mapping(
 
     if !hit.is_primary {
         bam_record.set_secondary();
+        bam_record.set_supplementary();
     } else {
         bam_record.unset_secondary();
+        bam_record.unset_supplementary();
     }
 
     if hit.is_supplementary {
@@ -325,7 +327,8 @@ pub fn set_primary_alignment(records: &mut Vec<BamRecord>) {
                 Cigar::Equal(n) | Cigar::Match(n) => n as i64,
                 _ => 0,
             })
-            .reduce(|a, b| (a + b)).unwrap();
+            .reduce(|a, b| (a + b))
+            .unwrap();
         -matched
     });
 
@@ -366,7 +369,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn test_set_primary_alignment() {
         let mut r1 = BamRecord::new();
@@ -382,7 +384,6 @@ mod tests {
         cigar_str.push(Cigar::Equal(4));
         r2.set(b"2", Some(&cigar_str), b"AACT", &vec![255; 4]);
 
-
         let mut r3 = BamRecord::new();
         r3.set_secondary();
         let mut cigar_str = CigarString(vec![]);
@@ -397,6 +398,5 @@ mod tests {
         for record in &records {
             println!("primary: {}", !record.is_secondary());
         }
-
     }
 }
