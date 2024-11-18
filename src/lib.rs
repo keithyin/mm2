@@ -208,7 +208,7 @@ pub fn build_bam_record_from_mapping(
     query_record: &QueryRecord,
     target_idx: &HashMap<String, (usize, usize)>,
 ) -> BamRecord {
-    println!("{:?}", hit);
+    // println!("{:?}", hit);
 
     let mut bam_record = BamRecord::new();
 
