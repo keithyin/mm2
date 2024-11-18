@@ -279,7 +279,7 @@ pub fn build_bam_record_from_mapping(
     bam_record
 }
 
-fn convert_mapping_cigar_to_record_cigar(
+pub fn convert_mapping_cigar_to_record_cigar(
     mapping_cigar: &[(u32, u8)],
     query_start: usize,
     query_end: usize,
