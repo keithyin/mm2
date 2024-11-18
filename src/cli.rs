@@ -2,6 +2,15 @@
 use std::str::FromStr;
 
 use clap::{self, Parser, Subcommand, Args};
+use minimap2::Aligner;
+
+use crate::BamRecord;
+
+pub trait TOverrideAlignerParam {
+    
+    fn modify_aligner(&self, aligner: &mut Aligner);
+
+}
 
 #[derive(Debug, Parser, Clone)]
 #[command(version, about, long_about=None)]
@@ -11,6 +20,8 @@ pub struct Cli {
     
     #[arg(long="preset", default_value_t=String::from_str("map-ont").unwrap())]
     pub preset: String,
+
+
 
     #[command(subcommand)]
     pub commands: Commands
@@ -24,20 +35,43 @@ pub enum Commands {
     S2S(Sbreads2SmcAlignArgs)
 }
 
-#[derive(Debug, Args, Clone, Copy)]
+#[derive(Debug, Args, Clone, Copy, Default)]
 pub struct IndexArgs {
     #[arg(long, help="minimizer kmer")]
-    kmer: Option<usize>,
+    pub kmer: Option<usize>,
 
     #[arg(long, help="minimizer window size")]
-    wins: Option<usize>,
+    pub wins: Option<usize>,
+}
+
+impl TOverrideAlignerParam for IndexArgs {
+    fn modify_aligner(&self, aligner: &mut Aligner) {
+        if let Some(k) = self.kmer {
+            aligner.idxopt.k = k as i16;
+        }
+        if let Some(w) = self.wins {
+            aligner.idxopt.w = w as i16;
+        }
+    }
 }
 
 #[derive(Debug, Args, Clone)]
 pub struct ReadsToRefAlignArgs {
 
     #[command(flatten)]
-    io_args: IoArgs
+    pub io_args: IoArgs,
+
+    #[command(flatten)]
+    pub index_args: IndexArgs,
+
+    #[command(flatten)]
+    pub map_args: MapArgs,
+
+    #[command(flatten)]
+    pub align_args: AlignArgs,
+
+    #[command(flatten)]
+    pub oup_args: OupArgs
 
 }
 
@@ -69,21 +103,34 @@ pub struct IoArgs {
     based on the order of the filenames", required=true)]
     pub query: Vec<String>,
 
-    #[arg(long="target", group="target")]
+    // , group="target"
+    #[arg(long="target")]
     pub target: Option<String>,
-    #[arg(long="indexedTarget", group="target")]
+    #[arg(long="indexedTarget")]
     pub indexed_target: Option<String>,
 
-    #[arg(short='p', help="output a file named ${p}.bam")]
+    #[arg(short='p', help="output a file named ${p}.bam", required=true)]
     pub prefix: String
 }
 
-#[derive(Debug, Args, Clone)]
+impl IoArgs {
+    pub fn get_oup_path(&self) -> String {
+        format!("{}.bam", self.prefix)
+    }
+}
+
+#[derive(Debug, Args, Clone, Default)]
 pub struct MapArgs {
     
 }
 
-#[derive(Debug, Args, Clone)]
+impl TOverrideAlignerParam for  MapArgs {
+    fn modify_aligner(&self, aligner: &mut Aligner) {
+        
+    }
+}
+
+#[derive(Debug, Args, Clone, Default)]
 pub struct AlignArgs {
     #[arg(short='m', help="matching_score>=0, recommend 2")]
     matching_score: Option<i32>,
@@ -98,8 +145,40 @@ pub struct AlignArgs {
     gap_extension_penalty: Option<String>,
 }
 
+impl TOverrideAlignerParam for AlignArgs {
+    fn modify_aligner(&self, aligner: &mut Aligner) {
+        if let Some(m) = self.matching_score {
+            aligner.mapopt.a = m;
+        }
 
-#[derive(Debug, Args, Clone)]
+        if let Some(mm) = self.mismatch_penalty {
+            aligner.mapopt.b = mm;
+        }
+
+        if let Some(gap_o) = &self.gap_open_penalty {
+            if gap_o.contains(",") {
+                let (o1, o2) = gap_o.rsplit_once(".").unwrap();
+                aligner.mapopt.q = o1.parse::<i32>().unwrap();
+                aligner.mapopt.q2 = o2.parse::<i32>().unwrap();
+            } else {
+                aligner.mapopt.q = gap_o.parse::<i32>().unwrap();
+            }
+        }
+
+        if let Some(gap_e) = &self.gap_extension_penalty {
+            if gap_e.contains(",") {
+                let (e1, e2) = gap_e.rsplit_once(".").unwrap();
+                aligner.mapopt.e = e1.parse::<i32>().unwrap();
+                aligner.mapopt.e2 = e2.parse::<i32>().unwrap();
+            } else {
+                aligner.mapopt.e = gap_e.parse::<i32>().unwrap();
+            }
+        }
+    }
+}
+
+
+#[derive(Debug, Args, Clone, Default)]
 pub struct OupArgs {
 
     #[arg(long="noSeco", help="discard secondary alignment")]
@@ -122,4 +201,29 @@ pub struct OupArgs {
 
     #[arg(long="oupCovT", default_value_t=0.0, help="remove the record from the result bam file when the coverage < coverage_threshold")]
     oup_coverage_threshold: f32,
+}
+
+impl TOverrideAlignerParam for OupArgs {
+    fn modify_aligner(&self, aligner: &mut Aligner) {
+        if self.discard_secondary {
+            aligner.mapopt.flag &=  !0x1000000000;
+        }
+    }
+
+}
+
+impl OupArgs {
+    pub fn valid(&self, record: &BamRecord) -> bool {
+
+        if self.discard_secondary && record.is_secondary(){
+            return false;
+        }
+
+        if self.discard_supplementary && record.is_supplementary() {
+            return false;
+        }
+
+        return true;
+
+    }
 }

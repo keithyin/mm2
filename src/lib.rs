@@ -1,93 +1,402 @@
+pub mod bam_record_ext;
 pub mod cli;
-mod samtools;
-use cli::{AlignArgs, IndexArgs, MapArgs};
-use minimap2::{Aligner, Preset};
-use rust_htslib::bam::Read;
+pub mod dna;
+pub mod fille_reader;
+use std::{collections::HashMap, thread};
 
-fn build_aligner(preset: &str, index_args: &IndexArgs, map_args: &MapArgs, align_args: &AlignArgs) -> Aligner{
+use cli::{AlignArgs, IndexArgs, MapArgs, OupArgs, TOverrideAlignerParam};
+use crossbeam::channel::{Receiver, Sender};
+use fille_reader::{FastaFileReader, QueryRecord};
+use minimap2::Aligner;
+use rust_htslib::bam::{
+    header::HeaderRecord,
+    record::{Cigar, CigarString},
+    Header, Read,
+};
 
-    let mut aligner = Aligner::builder();
-    aligner = match preset {
-        "map-ont" => aligner.map_ont(),
-        ps => panic!("invalid preset {}", ps)
-    };
+type BamRecord = rust_htslib::bam::record::Record;
+type BamWriter = rust_htslib::bam::Writer;
+type BamReader = rust_htslib::bam::Reader;
 
-
-    aligner
-
+pub struct SingleQueryAlignResult {
+    pub records: Vec<BamRecord>,
 }
 
+pub fn build_aligner(
+    preset: &str,
+    index_args: &IndexArgs,
+    map_args: &MapArgs,
+    align_args: &AlignArgs,
+    oup_args: &OupArgs,
+    targets: &Vec<QueryRecord>,
+) -> Vec<Aligner> {
+    let aligners = thread::scope(|s| {
+        let mut handles = vec![];
+        for target in targets {
+            let hd = s.spawn(|| {
+                let mut aligner = Aligner::builder();
 
-pub fn index_ref_file() {}
+                aligner = match preset {
+                    "map-ont" => aligner.map_ont(),
+                    "map-pb" => aligner.map_pb(),
+                    "map-hifi" => aligner.map_hifi(),
 
-pub fn query2ref_align(
-    query_files: &Vec<&str>,
-    ref_file: Option<&str>,
-    indexed_ref_file: Option<&str>,
-    oup_filename: &str,
-    mut aligner: Aligner,
-    threads: usize
-) {
-    if ref_file.is_none() && indexed_ref_file.is_none() {
-        panic!("ref_file and indexed_ref_file cannot all be none");
-    }
+                    pre => panic!("not implemented yet {}", pre),
+                };
 
-    if indexed_ref_file.is_some() {
-        
-    } else {
-        // aligner.with_index_threads(threads).with_seq(seq)
-    }
+                index_args.modify_aligner(&mut aligner);
+                map_args.modify_aligner(&mut aligner);
+                align_args.modify_aligner(&mut aligner);
+                oup_args.modify_aligner(&mut aligner);
 
-    
-}
+                aligner = aligner
+                    .with_index_threads(4)
+                    .with_cigar()
+                    .with_sam_out()
+                    .with_sam_hit_only()
+                    .with_seq_and_id(target.sequence.as_bytes(), target.qname.as_bytes())
+                    .unwrap();
 
-pub fn subreads2smc_align(subreads_bam: &str, smc_bam: &str) {
-
-    let sorted_subreads_bam = samtools::sort(subreads_bam, "ch");
-    let sorted_smc_bam = samtools::sort(smc_bam, "ch");
-
-    let mut smc_bam_reader = rust_htslib::bam::Reader::from_path(&sorted_smc_bam).unwrap();
-    smc_bam_reader.set_threads(5).unwrap();
-    let mut subreads_bam_reader = rust_htslib::bam::Reader::from_path(&sorted_subreads_bam).unwrap();
-    subreads_bam_reader.set_threads(5).unwrap();
-
-    
-    let mut smc_records = smc_bam_reader.records();
-    let mut subreads_records = subreads_bam_reader.records();
-
-    loop {
-        
-        let smc_record = smc_records.next();
-        if smc_record.is_none() {
-            break;
+                aligner
+            });
+            handles.push(hd);
         }
 
-        let smc_record = smc_record.unwrap().unwrap();
+        handles
+            .into_iter()
+            .map(|hd| hd.join().unwrap())
+            .collect::<Vec<Aligner>>()
+    });
 
+    aligners
+}
 
-        let mut sbr_record = None;
+pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
+    let mut file_idx = 0;
+    for filename in filenames {
+        let qname_suffix = if filenames.len() == 1 {
+            None
+        } else {
+            Some(format!("__{}", file_idx))
+        };
+        if filename.ends_with("fa") || filename.ends_with("fasta") || filename.ends_with("fna") {
+            let fasta_reader = FastaFileReader::new(filename.clone());
 
-        loop {
-            if sbr_record.is_none() {
-                sbr_record = subreads_records.next();
+            for mut record in fasta_reader {
+                if let Some(suffix) = &qname_suffix {
+                    record.qname.push_str(suffix);
+                }
+                sender.send(record).unwrap();
+            }
+        } else if filename.ends_with("bam") {
+            let mut bam_h = BamReader::from_path(filename).unwrap();
+            bam_h.set_threads(4).unwrap();
+            for record in bam_h.records() {
+                let record = record.unwrap();
+                sender
+                    .send(QueryRecord::from_bam_record(
+                        &record,
+                        qname_suffix.as_ref().map(|v| v.as_str()),
+                    ))
+                    .unwrap();
+            }
+        } else {
+            panic!(
+                "invalid file format {}. bam/fa/fasta/fna supported",
+                filename
+            );
+        }
+
+        file_idx += 1;
+    }
+}
+
+pub fn align_worker(
+    query_record_recv: Receiver<QueryRecord>,
+    align_res_sender: Sender<SingleQueryAlignResult>,
+    aligners: &Vec<Aligner>,
+    target_idx: &HashMap<String, (usize, usize)>,
+) {
+    for query_record in query_record_recv {
+        let records = align_single_query_to_targets(&query_record, aligners, target_idx);
+        align_res_sender
+            .send(SingleQueryAlignResult { records })
+            .unwrap();
+    }
+}
+
+pub fn align_single_query_to_targets(
+    query_record: &QueryRecord,
+    aligners: &Vec<Aligner>,
+    target_idx: &HashMap<String, (usize, usize)>,
+) -> Vec<BamRecord> {
+    let mut align_records = vec![];
+    for aligner in aligners {
+        for hit in aligner
+            .map(
+                query_record.sequence.as_bytes(),
+                true,
+                true,
+                None,
+                Some(&[67108864]), // 67108864 eqx
+            )
+            .unwrap()
+        {
+            if hit.alignment.is_none() {
+                continue;
             }
 
-            let sbr = sbr_record.unwrap().unwrap();
-            
-
-            sbr_record = subreads_records.next();
+            let record = build_bam_record_from_mapping(&hit, query_record, target_idx);
+            align_records.push(record);
         }
-
     }
 
+    set_primary_alignment(&mut align_records);
+
+    align_records
+}
+
+/// targetidx: &HashMap<target_name, (idx, target_len)>
+pub fn write_bam_worker(
+    recv: Receiver<SingleQueryAlignResult>,
+    target_idx: &HashMap<String, (usize, usize)>,
+    o_path: &str,
+    oup_args: &OupArgs,
+) {
+    let mut header = Header::new();
+    let mut hd = HeaderRecord::new(b"HD");
+    hd.push_tag(b"VN", "1.5");
+    hd.push_tag(b"SO", "unknown");
+    header.push_record(&hd);
+
+    let mut targets = target_idx.iter().collect::<Vec<_>>();
+    targets.sort_by_key(|tup| tup.1 .0);
+
+    for target in targets {
+        let mut hd = HeaderRecord::new(b"SQ");
+        hd.push_tag(b"SN", &target.0);
+        hd.push_tag(b"LN", target.1 .1);
+        header.push_record(&hd);
+    }
+
+    let mut writer = BamWriter::from_path(o_path, &header, rust_htslib::bam::Format::Bam).unwrap();
+    writer.set_threads(4).unwrap();
+    for align_res in recv {
+        for record in align_res.records {
+            if oup_args.valid(&record) {
+                writer.write(&record).unwrap();
+            }
+        }
+    }
+}
+
+pub fn build_bam_record_from_mapping(
+    hit: &minimap2::Mapping,
+    query_record: &QueryRecord,
+    target_idx: &HashMap<String, (usize, usize)>,
+) -> BamRecord {
+    println!("{:?}", hit);
+
+    let mut bam_record = BamRecord::new();
+
+    let mut seq = &query_record.sequence;
+    let rev_seq = match hit.strand {
+        minimap2::Strand::Forward => None,
+        minimap2::Strand::Reverse => Some(dna::reverse_complement(seq)),
+    };
+    if rev_seq.is_some() {
+        seq = rev_seq.as_ref().unwrap();
+        bam_record.set_reverse();
+    }
+
+    let aln_info = hit.alignment.as_ref().unwrap();
+    let cigar_str = convert_mapping_cigar_to_record_cigar(
+        aln_info.cigar.as_ref().unwrap(),
+        hit.query_start as usize,
+        hit.query_end as usize,
+        seq.len(),
+    );
+
+    bam_record.set(
+        query_record.qname.as_bytes(),
+        Some(&cigar_str),
+        seq.as_bytes(),
+        &vec![255; seq.len()],
+    );
+
+    // reference start
+    bam_record.set_pos(hit.target_start as i64);
+    bam_record.set_mpos(-1);
+    // bam_record.set_mpos(mpos);
+    // bam_record.reference_end()
+    bam_record.set_mapq(hit.mapq as u8);
+
+    bam_record.set_tid(target_idx.get(hit.target_name.as_ref().unwrap()).unwrap().0 as i32);
+    bam_record.set_mtid(-1);
+
+    if !hit.is_primary {
+        bam_record.set_secondary();
+    } else {
+        bam_record.unset_secondary();
+    }
+
+    if hit.is_supplementary {
+        bam_record.set_supplementary();
+    } else {
+        bam_record.unset_supplementary();
+    }
+    bam_record.unset_unmapped();
+
+    bam_record
+        .push_aux(
+            b"cs",
+            rust_htslib::bam::record::Aux::String(aln_info.cs.as_ref().unwrap()),
+        )
+        .unwrap();
+
+    bam_record
+        .push_aux(
+            b"md",
+            rust_htslib::bam::record::Aux::String(aln_info.md.as_ref().unwrap()),
+        )
+        .unwrap();
+
+    bam_record
+}
+
+fn convert_mapping_cigar_to_record_cigar(
+    mapping_cigar: &[(u32, u8)],
+    query_start: usize,
+    query_end: usize,
+    query_len: usize,
+) -> CigarString {
+    let mut cigar_str = CigarString(vec![]);
+
+    if query_start > 0 {
+        cigar_str.push(Cigar::SoftClip(query_start as u32));
+    }
+
+    mapping_cigar.iter().for_each(|(cnt, op)| {
+        let cnt = *cnt;
+        let cur_cigar = match *op {
+            0 => Cigar::Match(cnt),
+            1 => Cigar::Ins(cnt),
+            2 => Cigar::Del(cnt),
+            3 => Cigar::RefSkip(cnt),
+            4 => Cigar::SoftClip(cnt),
+            5 => Cigar::HardClip(cnt),
+            6 => Cigar::Pad(cnt),
+            7 => Cigar::Equal(cnt),
+            8 => Cigar::Diff(cnt),
+            v => panic!("invalid cigar op :{}", v),
+        };
+        cigar_str.push(cur_cigar);
+    });
+
+    if query_end != query_len {
+        cigar_str.push(Cigar::SoftClip((query_len - query_end) as u32));
+    }
+    cigar_str
+}
+
+/// {"target_name": (idx, length)}
+pub fn targets_to_targetsidx(targets: &Vec<QueryRecord>) -> HashMap<String, (usize, usize)> {
+    let mut target2idx = HashMap::new();
+    targets.iter().enumerate().for_each(|(idx, target)| {
+        target2idx.insert(target.qname.clone(), (idx, target.sequence.len()));
+    });
+    target2idx
+}
+
+pub fn set_primary_alignment(records: &mut Vec<BamRecord>) {
+    let mut primary_reocrds = records
+        .iter_mut()
+        .filter(|record| !record.is_secondary())
+        .collect::<Vec<_>>();
+    if primary_reocrds.len() == 1 {
+        return;
+    }
+
+    primary_reocrds.sort_by_key(|record| {
+        let matched = record
+            .cigar()
+            .iter()
+            .map(|cigar| match *cigar {
+                Cigar::Equal(n) | Cigar::Match(n) => n as i64,
+                _ => 0,
+            })
+            .reduce(|a, b| (a + b)).unwrap();
+        -matched
+    });
+
+    primary_reocrds.iter_mut().skip(1).for_each(|record| {
+        record.set_secondary();
+        // record.set_supplementary();
+    });
 }
 
 #[cfg(test)]
 mod tests {
+    use bam_record_ext::record2str;
+    use fille_reader::read_fasta;
+
     use super::*;
 
     #[test]
-    fn it_works() {
-        println!("hello world");
+    fn test_align_single_query_to_target() {
+        let ref_file = "test_data/GCF_000005845.2_ASM584v2_genomic.fna";
+        let targets = read_fasta(ref_file).unwrap();
+        let aligners = build_aligner(
+            "map-ont",
+            &IndexArgs::default(),
+            &MapArgs::default(),
+            &AlignArgs::default(),
+            &OupArgs::default(),
+            &targets,
+        );
+        let target2idx = targets_to_targetsidx(&targets);
+
+        let query_file = "test_data/ecoli_query.fa";
+        let query_filter_iter = FastaFileReader::new(query_file.to_string());
+        for qr in query_filter_iter {
+            let records = align_single_query_to_targets(&qr, &aligners, &target2idx);
+            for record in records {
+                println!("{:?}", record2str(&record));
+            }
+        }
+    }
+
+
+    #[test]
+    fn test_set_primary_alignment() {
+        let mut r1 = BamRecord::new();
+        r1.unset_secondary();
+        let mut cigar_str = CigarString(vec![]);
+        cigar_str.push(Cigar::Equal(3));
+        cigar_str.push(Cigar::Diff(1));
+        r1.set(b"1", Some(&cigar_str), b"AACG", &vec![255; 4]);
+
+        let mut r2 = BamRecord::new();
+        r2.unset_secondary();
+        let mut cigar_str = CigarString(vec![]);
+        cigar_str.push(Cigar::Equal(4));
+        r2.set(b"2", Some(&cigar_str), b"AACT", &vec![255; 4]);
+
+
+        let mut r3 = BamRecord::new();
+        r3.set_secondary();
+        let mut cigar_str = CigarString(vec![]);
+        cigar_str.push(Cigar::Equal(2));
+        cigar_str.push(Cigar::Diff(2));
+        r3.set(b"3", Some(&cigar_str), b"AAGC", &vec![255; 4]);
+
+        let mut records = vec![r1, r2, r3];
+
+        set_primary_alignment(&mut records);
+
+        for record in &records {
+            println!("primary: {}", !record.is_secondary());
+        }
+
     }
 }
