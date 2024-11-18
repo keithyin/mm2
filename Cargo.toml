@@ -2,6 +2,9 @@
 name = "mm2"
 version = "0.1.0"
 edition = "2021"
+description = "minimap2 frontend"
+license = "MIT"
+repository ="https://github.com/keithyin/mm2"
 
 [dependencies]
 clap = {version="4.4", features=["derive"]}
