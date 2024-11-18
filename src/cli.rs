@@ -15,7 +15,8 @@ pub struct Cli {
     #[arg(long = "threads")]
     pub threads: Option<usize>,
 
-    #[arg(long="preset", default_value_t=String::from_str("map-ont").unwrap())]
+    #[arg(long="preset", default_value_t=String::from_str("map-ont").unwrap(), 
+        help="read https://lh3.github.io/minimap2/minimap2.html for more details")]
     pub preset: String,
 
     #[command(subcommand)]
