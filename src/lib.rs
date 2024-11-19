@@ -261,21 +261,13 @@ pub fn build_bam_record_from_mapping(
     }
 
     let aln_info = hit.alignment.as_ref().unwrap();
-    let mut cigar_str = convert_mapping_cigar_to_record_cigar(
+    let cigar_str = convert_mapping_cigar_to_record_cigar(
         aln_info.cigar.as_ref().unwrap(),
         hit.query_start as usize,
         hit.query_end as usize,
         seq.len(),
         rev_seq.is_some()
     );
-
-    if rev_seq.is_some() {
-        cigar_str = CigarString(cigar_str
-            .into_iter()
-            .copied()
-            .rev()
-            .collect::<Vec<_>>());
-    }
 
     bam_record.set(
         query_record.qname.as_bytes(),
