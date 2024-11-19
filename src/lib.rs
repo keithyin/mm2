@@ -5,6 +5,8 @@ pub mod fille_reader;
 pub mod pb_tools;
 pub mod samtools;
 
+mod utils;
+
 use std::{collections::HashMap, fs, io::BufReader, thread};
 
 use bam_record_ext::BamRecordExt;
@@ -18,6 +20,7 @@ use rust_htslib::bam::{
     record::{Aux, Cigar, CigarString},
     Header, Read,
 };
+use utils::command_line_str;
 
 pub type BamRecord = rust_htslib::bam::record::Record;
 pub type BamWriter = rust_htslib::bam::Writer;
@@ -192,6 +195,14 @@ pub fn write_bam_worker(
     hd.push_tag(b"VN", "1.5");
     hd.push_tag(b"SO", "unknown");
     header.push_record(&hd);
+
+    let mut hd = HeaderRecord::new(b"PG");
+    hd.push_tag(b"ID", "gsmm2")
+        .push_tag(b"PN", "gsmm2")
+        .push_tag(b"CL", &command_line_str())
+        .push_tag(b"VN", &env!("CARGO_PKG_VERSION"))
+        ;
+
 
     let mut targets = target_idx.iter().collect::<Vec<_>>();
     targets.sort_by_key(|tup| tup.1 .0);
