@@ -266,6 +266,7 @@ pub fn build_bam_record_from_mapping(
         hit.query_start as usize,
         hit.query_end as usize,
         seq.len(),
+        rev_seq.is_some()
     );
 
     if rev_seq.is_some() {
@@ -330,11 +331,16 @@ pub fn build_bam_record_from_mapping(
 
 pub fn convert_mapping_cigar_to_record_cigar(
     mapping_cigar: &[(u32, u8)],
-    query_start: usize,
-    query_end: usize,
+    mut query_start: usize,
+    mut query_end: usize,
     query_len: usize,
+    is_rev: bool
 ) -> CigarString {
     let mut cigar_str = CigarString(vec![]);
+
+    if is_rev {
+        (query_start, query_end) = (query_len - query_end, query_end - query_start);
+    }
 
     if query_start > 0 {
         cigar_str.push(Cigar::SoftClip(query_start as u32));
