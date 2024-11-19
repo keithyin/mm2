@@ -331,7 +331,7 @@ pub fn convert_mapping_cigar_to_record_cigar(
     let mut cigar_str = CigarString(vec![]);
 
     if is_rev {
-        (query_start, query_end) = (query_len - query_end, query_end - query_start);
+        (query_start, query_end) = (query_len - query_end, query_len - query_start);
     }
 
     if query_start > 0 {
