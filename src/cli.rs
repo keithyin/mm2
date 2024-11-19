@@ -74,12 +74,12 @@ pub struct IoArgs {
         help = "query file paths, 
     if multiple query_filepath are provided, 
     their query_names will be rewriten to ___0, ___1, and so on, 
-    based on the order of the filenames",
+    based on the order of the filenames. valid file format bam/fa/fq",
         required = true
     )]
     pub query: Vec<String>,
 
-    /// align target. fasta
+    /// target.fasta
     #[arg(long = "target", short = 't', group = "target_group")]
     pub target: Option<String>,
     /// mmi file
