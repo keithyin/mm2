@@ -202,6 +202,7 @@ pub fn write_bam_worker(
         .push_tag(b"CL", &command_line_str())
         .push_tag(b"VN", &env!("CARGO_PKG_VERSION"))
         ;
+    header.push_record(&hd);
 
 
     let mut targets = target_idx.iter().collect::<Vec<_>>();

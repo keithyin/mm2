@@ -2,6 +2,15 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
+fn fastx_header_line_to_header(header_line: &str) -> String {
+    let header = if header_line[1..].contains(" ") {
+        header_line[1..].split_once(" ").unwrap().0.to_string()
+    } else {
+        header_line[1..].to_string()
+    };
+    return header;
+}
+
 /// 表示一个 FASTA 记录的结构体
 #[derive(Debug, PartialEq)]
 pub struct QueryRecord {
@@ -51,7 +60,7 @@ pub fn read_fasta<P: AsRef<Path>>(file_path: P) -> io::Result<Vec<QueryRecord>> 
                 });
                 current_sequence.clear();
             }
-            current_header = Some(line[1..].to_string()); // 去掉 '>'
+            current_header = Some(fastx_header_line_to_header(&line));
         } else {
             current_sequence.push_str(&line);
         }
@@ -95,7 +104,8 @@ impl Iterator for FastaFileReader {
             self.lines = Some(lines);
             let first_header = self.lines.as_mut().unwrap().next().unwrap().unwrap();
             assert!(first_header.starts_with(">"));
-            self.current_header = Some(first_header[1..].to_string());
+
+            self.current_header = Some(fastx_header_line_to_header(&first_header));
         }
 
         if self.current_header.is_none() {
@@ -111,7 +121,7 @@ impl Iterator for FastaFileReader {
         while let Some(line) = self.lines.as_mut().unwrap().next() {
             let line = line.unwrap();
             if line.starts_with(">") {
-                self.current_header = Some(line[1..].to_string());
+                self.current_header = Some(fastx_header_line_to_header(&line));
                 return Some(fasta_record);
             }
 
@@ -167,11 +177,7 @@ impl<'a> Iterator for FastqReaderIter<'a> {
             panic!("header:'{}' not a valid fastq header", header);
         }
 
-        header = if let Some((v0, _)) = header.trim().split_once(" ") {
-            v0[1..].to_string()
-        } else {
-            header[1..].to_string()
-        };
+        header = fastx_header_line_to_header(&header);
 
         let seq = self
             .read_one_line()
@@ -193,6 +199,7 @@ impl<'a> Iterator for FastqReaderIter<'a> {
             .expect("not a valid FastqRecord")
             .trim()
             .to_string();
+
 
         Some(FastqRecord(header, seq, qual))
     }
