@@ -6,9 +6,9 @@ use mm2::{
     cli::{self, ReadsToRefAlignArgs},
     fille_reader::read_fasta,
     query_seq_sender,
-    samtools::{samtools_bai, sort_by_coordinates},
     targets_to_targetsidx, write_bam_worker,
 };
+use gskits::samtools::{samtools_bai, sort_by_coordinates};
 
 fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignArgs) {
     let target_filename = args

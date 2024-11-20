@@ -574,6 +574,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 
 [[package]]
+name = "gskits"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5c0d506841b3df9f592b0fcccd77417710a0b84f9eeb0519234ab9230b17fd8"
+dependencies = [
+ "anyhow",
+ "indicatif",
+ "num_cpus",
+ "rust-htslib",
+ "tracing",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -971,13 +984,14 @@ dependencies = [
 
 [[package]]
 name = "mm2"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "bio",
  "clap",
  "crossbeam",
  "glob",
+ "gskits",
  "indicatif",
  "lazy_static",
  "minimap2",

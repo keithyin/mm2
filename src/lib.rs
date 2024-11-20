@@ -1,26 +1,21 @@
-pub mod bam_record_ext;
 pub mod cli;
 pub mod dna;
 pub mod fille_reader;
-pub mod pb_tools;
-pub mod samtools;
-
-mod utils;
 
 use std::{collections::HashMap, fs, io::BufReader, thread};
 
-use bam_record_ext::BamRecordExt;
+use gskits::{gsbam::bam_record_ext::BamRecordExt, pbar};
 use cli::{AlignArgs, IndexArgs, MapArgs, OupArgs, TOverrideAlignerParam};
 use crossbeam::channel::{Receiver, Sender};
 use fille_reader::{FastaFileReader, FastqReaderIter, FastqRecord, QueryRecord};
 use minimap2::Aligner;
-use pb_tools::DEFAULT_INTERVAL;
+use gskits::pbar::DEFAULT_INTERVAL;
 use rust_htslib::bam::{
     header::HeaderRecord,
     record::{Aux, Cigar, CigarString},
     Header, Read,
 };
-use utils::command_line_str;
+use gskits::utils::command_line_str;
 
 pub type BamRecord = rust_htslib::bam::record::Record;
 pub type BamWriter = rust_htslib::bam::Writer;
@@ -216,7 +211,7 @@ pub fn write_bam_worker(
     }
 
     let pb = if enable_pb {
-        Some(pb_tools::get_spin_pb(
+        Some(pbar::get_spin_pb(
             format!("writing alignment result"),
             DEFAULT_INTERVAL,
         ))
@@ -412,7 +407,7 @@ pub fn set_primary_alignment(records: &mut Vec<BamRecord>) {
 
 #[cfg(test)]
 mod tests {
-    use bam_record_ext::record2str;
+    use gskits::gsbam::bam_record_ext::record2str;
     use fille_reader::read_fasta;
 
     use super::*;
