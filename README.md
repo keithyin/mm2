@@ -23,6 +23,10 @@ gsmm2 align -q query.fa --target target.fa -p query2target
 
 # changelog
 
+## 0.6.0
+
+* if the query file is bam format, it will try to dump np & ch & rq to the result bam
+
 ## 0.5.0
 
 * if the query file is bam format, it will try to dump np & ch to the result bam
