@@ -610,9 +610,9 @@ checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 
 [[package]]
 name = "gskits"
-version = "0.4.1"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eea39ba98dc8aa5b2d57439d53eb7c574aeb7aac0b3762f10db453a97bcba32e"
+checksum = "f08c015cbdfe99fed5a5b7a88d15eeb4530ebb8708b37f0438ebeb00d72d60e3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1044,7 +1044,7 @@ dependencies = [
 
 [[package]]
 name = "mm2"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "bio",
