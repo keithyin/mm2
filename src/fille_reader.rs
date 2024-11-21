@@ -28,13 +28,14 @@ impl QueryRecord {
             qname.push_str(suffix);
         }
 
+        let record_ext = gskits::gsbam::bam_record_ext::BamRecordExt::new(record);
         let seq = unsafe { String::from_utf8_unchecked(record.seq().as_bytes()) };
 
         Self {
             qname: qname,
             sequence: seq,
-            ch: None,
-            np: None,
+            ch: record_ext.get_ch(),
+            np: record_ext.get_np(),
         }
     }
 }

@@ -325,6 +325,15 @@ pub fn build_bam_record_from_mapping(
             .unwrap();
     }
 
+    if let Some(np_) = query_record.np {
+        bam_record.push_aux(b"np", Aux::U16(np_ as u16)).unwrap();
+    }
+
+    if let Some(ch_) = query_record.ch {
+        bam_record.push_aux(b"ch", Aux::U16(ch_ as u16)).unwrap();
+
+    }
+
     bam_record
 }
 
