@@ -1,27 +1,23 @@
+pub mod bam_writer;
 pub mod cli;
-pub mod dna;
-pub mod fille_reader;
+use std::{collections::HashMap, thread};
 
-use std::{collections::HashMap, fs, io::BufReader, thread};
-
-use gskits::{gsbam::bam_record_ext::BamRecordExt, pbar};
 use cli::{AlignArgs, IndexArgs, MapArgs, OupArgs, TOverrideAlignerParam};
 use crossbeam::channel::{Receiver, Sender};
-use fille_reader::{FastaFileReader, FastqReaderIter, FastqRecord, QueryRecord};
-use minimap2::Aligner;
-use gskits::pbar::DEFAULT_INTERVAL;
-use rust_htslib::bam::{
-    header::HeaderRecord,
-    record::{Aux, Cigar, CigarString},
-    Header, Read,
+use gskits::{
+    dna::reverse_complement, ds::ReadInfo, fastx_reader::fasta_reader::FastaFileReader,
 };
-use gskits::utils::command_line_str;
+use minimap2::Aligner;
+use rust_htslib::bam::{
+    record::{Aux, Cigar, CigarString},
+    Read,
+};
 
 pub type BamRecord = rust_htslib::bam::record::Record;
 pub type BamWriter = rust_htslib::bam::Writer;
 pub type BamReader = rust_htslib::bam::Reader;
 
-pub struct SingleQueryAlignResult {
+pub struct AlignResult {
     pub records: Vec<BamRecord>,
 }
 
@@ -31,7 +27,7 @@ pub fn build_aligner(
     map_args: &MapArgs,
     align_args: &AlignArgs,
     oup_args: &OupArgs,
-    targets: &Vec<QueryRecord>,
+    targets: &Vec<ReadInfo>,
 ) -> Vec<Aligner> {
     let aligners = thread::scope(|s| {
         let mut handles = vec![];
@@ -57,7 +53,7 @@ pub fn build_aligner(
                     .with_cigar()
                     .with_sam_out()
                     .with_sam_hit_only()
-                    .with_seq_and_id(target.sequence.as_bytes(), target.qname.as_bytes())
+                    .with_seq_and_id(target.seq.as_bytes(), target.name.as_bytes())
                     .unwrap();
 
                 aligner
@@ -74,7 +70,7 @@ pub fn build_aligner(
     aligners
 }
 
-pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
+pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<ReadInfo>) {
     let mut file_idx = 0;
     for filename in filenames {
         let qname_suffix = if filenames.len() == 1 {
@@ -87,7 +83,7 @@ pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
 
             for mut record in fasta_reader {
                 if let Some(suffix) = &qname_suffix {
-                    record.qname.push_str(suffix);
+                    record.name.push_str(suffix);
                 }
                 sender.send(record).unwrap();
             }
@@ -97,27 +93,17 @@ pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
             for record in bam_h.records() {
                 let record = record.unwrap();
                 sender
-                    .send(QueryRecord::from_bam_record(
+                    .send(ReadInfo::from_bam_record(
                         &record,
                         qname_suffix.as_ref().map(|v| v.as_str()),
                     ))
                     .unwrap();
             }
         } else if filename.ends_with("fq") || filename.ends_with("fastq") {
-            let fastq_file = fs::File::open(&filename).unwrap();
-            let mut buf_reader = BufReader::new(fastq_file);
-            let fastq_iter = FastqReaderIter::new(&mut buf_reader);
-
-            for FastqRecord(qname, seq, _) in fastq_iter {
-                let mut record = QueryRecord {
-                    qname: qname,
-                    sequence: seq,
-                    ch: None,
-                    np: None,
-                };
-
+            let fa_iter = FastaFileReader::new(filename.to_string());
+            for mut record in fa_iter {
                 if let Some(suffix) = &qname_suffix {
-                    record.qname.push_str(suffix);
+                    record.seq.push_str(suffix);
                 }
                 sender.send(record).unwrap();
             }
@@ -133,21 +119,19 @@ pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<QueryRecord>) {
 }
 
 pub fn align_worker(
-    query_record_recv: Receiver<QueryRecord>,
-    align_res_sender: Sender<SingleQueryAlignResult>,
+    query_record_recv: Receiver<gskits::ds::ReadInfo>,
+    align_res_sender: Sender<AlignResult>,
     aligners: &Vec<Aligner>,
     target_idx: &HashMap<String, (usize, usize)>,
 ) {
     for query_record in query_record_recv {
         let records = align_single_query_to_targets(&query_record, aligners, target_idx);
-        align_res_sender
-            .send(SingleQueryAlignResult { records })
-            .unwrap();
+        align_res_sender.send(AlignResult { records }).unwrap();
     }
 }
 
 pub fn align_single_query_to_targets(
-    query_record: &QueryRecord,
+    query_record: &gskits::ds::ReadInfo,
     aligners: &Vec<Aligner>,
     target_idx: &HashMap<String, (usize, usize)>,
 ) -> Vec<BamRecord> {
@@ -155,7 +139,7 @@ pub fn align_single_query_to_targets(
     for aligner in aligners {
         for hit in aligner
             .map(
-                query_record.sequence.as_bytes(),
+                query_record.seq.as_bytes(),
                 true,
                 true,
                 None,
@@ -177,90 +161,19 @@ pub fn align_single_query_to_targets(
     align_records
 }
 
-/// targetidx: &HashMap<target_name, (idx, target_len)>
-pub fn write_bam_worker(
-    recv: Receiver<SingleQueryAlignResult>,
-    target_idx: &HashMap<String, (usize, usize)>,
-    o_path: &str,
-    oup_args: &OupArgs,
-    enable_pb: bool,
-) {
-    let mut header = Header::new();
-    let mut hd = HeaderRecord::new(b"HD");
-    hd.push_tag(b"VN", "1.5");
-    hd.push_tag(b"SO", "unknown");
-    header.push_record(&hd);
-
-    let mut hd = HeaderRecord::new(b"PG");
-    hd.push_tag(b"ID", "gsmm2")
-        .push_tag(b"PN", "gsmm2")
-        .push_tag(b"CL", &command_line_str())
-        .push_tag(b"VN", &env!("CARGO_PKG_VERSION"))
-        ;
-    header.push_record(&hd);
-
-
-    let mut targets = target_idx.iter().collect::<Vec<_>>();
-    targets.sort_by_key(|tup| tup.1 .0);
-
-    for target in targets {
-        let mut hd = HeaderRecord::new(b"SQ");
-        hd.push_tag(b"SN", &target.0);
-        hd.push_tag(b"LN", target.1 .1);
-        header.push_record(&hd);
-    }
-
-    let pb = if enable_pb {
-        Some(pbar::get_spin_pb(
-            format!("writing alignment result"),
-            DEFAULT_INTERVAL,
-        ))
-    } else {
-        None
-    };
-
-    let mut writer = BamWriter::from_path(o_path, &header, rust_htslib::bam::Format::Bam).unwrap();
-    writer.set_threads(4).unwrap();
-
-    for align_res in recv {
-        pb.as_ref().unwrap().inc(1);
-        for mut record in align_res.records {
-            if oup_args.valid(&record) {
-                let record_ext = BamRecordExt::new(&record);
-                let iy = record_ext.compute_identity();
-                let ec = record_ext.compute_query_coverage();
-
-                if iy < oup_args.oup_identity_threshold {
-                    continue;
-                }
-
-                if ec < oup_args.oup_coverage_threshold {
-                    continue;
-                }
-
-                record.push_aux(b"iy", Aux::Float(iy)).unwrap();
-                record.push_aux(b"ec", Aux::Float(ec)).unwrap();
-
-                writer.write(&record).unwrap();
-            }
-        }
-    }
-    pb.as_ref().unwrap().finish();
-}
-
 pub fn build_bam_record_from_mapping(
     hit: &minimap2::Mapping,
-    query_record: &QueryRecord,
+    query_record: &gskits::ds::ReadInfo,
     target_idx: &HashMap<String, (usize, usize)>,
 ) -> BamRecord {
     // println!("{:?}", hit);
 
     let mut bam_record = BamRecord::new();
 
-    let mut seq = &query_record.sequence;
+    let mut seq = &query_record.seq;
     let rev_seq = match hit.strand {
         minimap2::Strand::Forward => None,
-        minimap2::Strand::Reverse => Some(dna::reverse_complement(seq)),
+        minimap2::Strand::Reverse => Some(reverse_complement(seq)),
     };
     if rev_seq.is_some() {
         seq = rev_seq.as_ref().unwrap();
@@ -273,11 +186,11 @@ pub fn build_bam_record_from_mapping(
         hit.query_start as usize,
         hit.query_end as usize,
         seq.len(),
-        rev_seq.is_some()
+        rev_seq.is_some(),
     );
 
     bam_record.set(
-        query_record.qname.as_bytes(),
+        query_record.name.as_bytes(),
         Some(&cigar_str),
         seq.as_bytes(),
         &vec![255; seq.len()],
@@ -331,18 +244,22 @@ pub fn build_bam_record_from_mapping(
 
     if let Some(ch_) = query_record.ch {
         bam_record.push_aux(b"ch", Aux::U16(ch_ as u16)).unwrap();
+    }
 
+    if let Some(rq_) = query_record.rq {
+        bam_record.push_aux(b"rq", Aux::Float(rq_)).unwrap();
     }
 
     bam_record
 }
 
+/// if reverse alignment, the cigar will be reversed!
 pub fn convert_mapping_cigar_to_record_cigar(
     mapping_cigar: &[(u32, u8)],
     mut query_start: usize,
     mut query_end: usize,
     query_len: usize,
-    is_rev: bool
+    is_rev: bool,
 ) -> CigarString {
     let mut cigar_str = CigarString(vec![]);
 
@@ -378,14 +295,15 @@ pub fn convert_mapping_cigar_to_record_cigar(
 }
 
 /// {"target_name": (idx, length)}
-pub fn targets_to_targetsidx(targets: &Vec<QueryRecord>) -> HashMap<String, (usize, usize)> {
+pub fn targets_to_targetsidx(targets: &Vec<ReadInfo>) -> HashMap<String, (usize, usize)> {
     let mut target2idx = HashMap::new();
     targets.iter().enumerate().for_each(|(idx, target)| {
-        target2idx.insert(target.qname.clone(), (idx, target.sequence.len()));
+        target2idx.insert(target.name.clone(), (idx, target.seq.len()));
     });
     target2idx
 }
 
+/// for multi target scenerio, the primary alignment will be the alignment that has max matched bases
 pub fn set_primary_alignment(records: &mut Vec<BamRecord>) {
     let mut primary_reocrds = records
         .iter_mut()
@@ -416,15 +334,16 @@ pub fn set_primary_alignment(records: &mut Vec<BamRecord>) {
 
 #[cfg(test)]
 mod tests {
-    use gskits::gsbam::bam_record_ext::record2str;
-    use fille_reader::read_fasta;
+    use gskits::fastx_reader::read_fastx;
+    use rust_htslib::bam::ext::BamRecordExtensions;
 
     use super::*;
 
     #[test]
     fn test_align_single_query_to_target() {
         let ref_file = "test_data/GCF_000005845.2_ASM584v2_genomic.fna";
-        let targets = read_fasta(ref_file).unwrap();
+        let fa_iter = FastaFileReader::new(ref_file.to_string());
+        let targets = read_fastx(fa_iter);
         let aligners = build_aligner(
             "map-ont",
             &IndexArgs::default(),
@@ -436,11 +355,13 @@ mod tests {
         let target2idx = targets_to_targetsidx(&targets);
 
         let query_file = "test_data/ecoli_query.fa";
-        let query_filter_iter = FastaFileReader::new(query_file.to_string());
+        let query_filter_iter =
+            gskits::fastx_reader::fasta_reader::FastaFileReader::new(query_file.to_string());
         for qr in query_filter_iter {
             let records = align_single_query_to_targets(&qr, &aligners, &target2idx);
             for record in records {
-                println!("{:?}", record2str(&record));
+                assert_eq!(record.reference_start(), 720);
+                assert_eq!(record.reference_end(), 1920)
             }
         }
     }
@@ -471,8 +392,8 @@ mod tests {
 
         set_primary_alignment(&mut records);
 
-        for record in &records {
-            println!("primary: {}", !record.is_secondary());
-        }
+        assert_eq!(records[0].is_secondary(), true);
+        assert_eq!(records[1].is_secondary(), false);
+        assert_eq!(records[2].is_secondary(), true);
     }
 }

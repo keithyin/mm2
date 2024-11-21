@@ -1,14 +1,18 @@
 use std::thread;
 
 use clap::Parser;
-use mm2::{
-    align_worker, build_aligner,
-    cli::{self, ReadsToRefAlignArgs},
-    fille_reader::read_fasta,
-    query_seq_sender,
-    targets_to_targetsidx, write_bam_worker,
+use gskits::fastx_reader::read_fastx;
+use gskits::{
+    fastx_reader::fasta_reader::FastaFileReader,
+    samtools::{samtools_bai, sort_by_coordinates},
 };
-use gskits::samtools::{samtools_bai, sort_by_coordinates};
+use mm2::{
+    align_worker,
+    bam_writer::{write_bam_worker, BamOupArgs},
+    build_aligner,
+    cli::{self, ReadsToRefAlignArgs},
+    query_seq_sender, targets_to_targetsidx,
+};
 
 fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignArgs) {
     let target_filename = args
@@ -17,7 +21,8 @@ fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignA
         .as_ref()
         .expect("target need to be provided");
 
-    let targets = read_fasta(target_filename).unwrap();
+    let fa_iter = FastaFileReader::new(target_filename.to_string());
+    let targets = read_fastx(fa_iter);
     let target2idx = targets_to_targetsidx(&targets);
 
     let aligners = build_aligner(
@@ -57,7 +62,9 @@ fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignA
             align_res_recv,
             target2idx,
             &args.io_args.get_oup_path(),
-            &args.oup_args,
+            &BamOupArgs::from(&args.oup_args),
+            "gsmm2",
+            env!("CARGO_PKG_VERSION"),
             true,
         );
     });
