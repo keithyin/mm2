@@ -189,6 +189,7 @@ pub fn build_bam_record_from_mapping(
         rev_seq.is_some(),
     );
 
+
     bam_record.set(
         query_record.name.as_bytes(),
         Some(&cigar_str),
