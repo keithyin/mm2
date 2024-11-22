@@ -379,6 +379,10 @@ pub fn bam_concordance(args: &Cli) -> anyhow::Result<()> {
             let header_view = bam::HeaderView::from_header(&header);
             for record in reader.records() {
                 let record = record.unwrap();
+                if record.is_supplementary() || record.is_unmapped() || record.is_secondary() {
+                    continue;
+                }
+                
                 let tid = record.tid() as u32;
                 if !tid2refname.contains_key(&tid) {
                     tid2refname.insert(tid, Arc::new(String::from_utf8(header_view.tid2name(tid).to_vec()).unwrap()));
