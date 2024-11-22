@@ -9,7 +9,7 @@ use gskits::{
 };
 use minimap2::Aligner;
 use rust_htslib::bam::{
-    record::{Aux, Cigar, CigarString},
+    record::{Aux, AuxArray, Cigar, CigarString},
     Read,
 };
 
@@ -171,11 +171,18 @@ pub fn build_bam_record_from_mapping(
     let mut bam_record = BamRecord::new();
 
     let mut seq = &query_record.seq;
+    let mut is_rev = false;
+
     let rev_seq = match hit.strand {
         minimap2::Strand::Forward => None,
-        minimap2::Strand::Reverse => Some(reverse_complement(seq)),
+        minimap2::Strand::Reverse => {
+            is_rev = true;
+            Some(reverse_complement(seq))
+        },
     };
-    if rev_seq.is_some() {
+
+
+    if is_rev {
         seq = rev_seq.as_ref().unwrap();
         bam_record.set_reverse();
     }
@@ -186,11 +193,11 @@ pub fn build_bam_record_from_mapping(
         hit.query_start as usize,
         hit.query_end as usize,
         seq.len(),
-        rev_seq.is_some(),
+        is_rev,
     );
 
     let qual = if let Some(ref qual_) = query_record.qual {
-        if rev_seq.is_some() {
+        if is_rev {
             qual_.iter().copied().rev().collect()
         } else {
             qual_.clone()
@@ -206,10 +213,9 @@ pub fn build_bam_record_from_mapping(
         seq.as_bytes(),
         &qual,
     );
+    if is_rev {
+        bam_record.set_reverse();
 
-    match hit.strand {
-        minimap2::Strand::Reverse => bam_record.set_reverse(),
-        _ => {}
     }
 
     // reference start
@@ -259,6 +265,33 @@ pub fn build_bam_record_from_mapping(
 
     if let Some(rq_) = query_record.rq {
         bam_record.push_aux(b"rq", Aux::Float(rq_)).unwrap();
+    }
+
+    if let Some(dw_) = &query_record.dw {
+        if is_rev {
+            let dw_ = dw_.iter().copied().rev().collect::<Vec<_>>();
+            bam_record.push_aux(b"dw", Aux::ArrayU8(AuxArray::from(&dw_))).unwrap();
+        } else {
+            bam_record.push_aux(b"dw", Aux::ArrayU8(AuxArray::from(dw_))).unwrap();
+        }
+    }
+
+    if let Some(ar_) = &query_record.ar {
+        if is_rev {
+            let ar_ = ar_.iter().copied().rev().collect::<Vec<_>>();
+            bam_record.push_aux(b"ar", Aux::ArrayU8(AuxArray::from(&ar_))).unwrap();
+        } else {
+            bam_record.push_aux(b"ar", Aux::ArrayU8(AuxArray::from(ar_))).unwrap();
+        }
+    }
+
+    if let Some(cr_) = &query_record.cr {
+        if is_rev {
+            let cr_ = cr_.iter().copied().rev().collect::<Vec<_>>();
+            bam_record.push_aux(b"cr", Aux::ArrayU8(AuxArray::from(&cr_))).unwrap();
+        } else {
+            bam_record.push_aux(b"cr", Aux::ArrayU8(AuxArray::from(cr_))).unwrap();
+        }
     }
 
     bam_record
