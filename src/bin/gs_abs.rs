@@ -2,6 +2,10 @@
 use clap::{self, Parser};
 use gskits::{fastx_reader::fasta_reader::FastaFileReader, file_reader::{bed_reader::BedInfo, vcf_reader::VcfInfo}, gsbam::bam_record_ext::BamRecordExt, pbar};
 
+use std::{collections::HashMap, fs, io::{BufReader, BufWriter, Write}, sync::Arc, thread};
+use crossbeam;
+use rust_htslib::bam::{self, ext::BamRecordExtensions, record::Cigar, Read};
+
 #[derive(Parser)]
 pub struct Cli {
     pub reffasta: String,
@@ -15,12 +19,6 @@ pub struct Cli {
     pub chrom: Option<String>,
 
 }
-
-
-use std::{collections::HashMap, fs, io::{BufReader, BufWriter, Write}, sync::Arc, thread};
-use crossbeam;
-use rust_htslib::bam::{self, ext::BamRecordExtensions, record::Cigar, Read};
-
 
 struct RecordReplica {
     ch: usize,
