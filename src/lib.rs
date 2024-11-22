@@ -189,12 +189,22 @@ pub fn build_bam_record_from_mapping(
         rev_seq.is_some(),
     );
 
+    let qual = if let Some(ref qual_) = query_record.qual {
+        if rev_seq.is_some() {
+            qual_.iter().copied().rev().collect()
+        } else {
+            qual_.clone()
+        }
+    } else {
+        vec![255; seq.len()]
+    };
+
 
     bam_record.set(
         query_record.name.as_bytes(),
         Some(&cigar_str),
         seq.as_bytes(),
-        &vec![255; seq.len()],
+        &qual,
     );
 
     match hit.strand {

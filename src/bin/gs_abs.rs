@@ -21,9 +21,9 @@ pub struct Cli {
 }
 
 struct RecordReplica {
-    ch: usize,
+    ch: u32,
     q_len: usize,
-    passes: usize,
+    passes: u32,
     rq: Option<f32>,
     cigars: Vec<bam::record::Cigar>,
     seq: String,
@@ -47,7 +47,7 @@ impl RecordReplica {
         }
     }
 
-    pub fn get_ch(&self) -> usize {
+    pub fn get_ch(&self) -> u32 {
         self.ch
     }
 
@@ -55,7 +55,7 @@ impl RecordReplica {
         self.q_len
     }
 
-    pub fn get_np(&self) -> usize {
+    pub fn get_np(&self) -> u32 {
         self.passes
     }
 
@@ -103,8 +103,8 @@ impl FastaFile {
 
 #[derive(Debug)]
 struct Stat {
-    ch: usize,
-    passes: usize,
+    ch: u32,
+    passes: u32,
     q_len: usize,
     m: usize,
     mm: usize,
@@ -122,7 +122,7 @@ struct Stat {
 }
 
 impl Stat {
-    fn new(ch: usize, q_len: usize, passes: usize, ref_start: usize, ref_end: usize, rq: Option<f32>) -> Self{
+    fn new(ch: u32, q_len: usize, passes: u32, ref_start: usize, ref_end: usize, rq: Option<f32>) -> Self{
         Self { 
             ch: ch, 
             passes: passes,
@@ -456,34 +456,6 @@ fn main() {
 
 #[cfg(test)]
 mod test {
-    use std::{fs, io::BufReader};
-
-    use gskits::file_reader::vcf_reader::VcfInfo;
-    use rust_htslib::bam::{self, ext::BamRecordExtensions, Read};
-
-
-    use crate::{Cli, stat_record_core, FastaFile, RecordReplica};
-
-    use super::bam_concordance;
-    #[test]
-    fn test_stat_record_core() {
-        let aligned_bam_path = "/data/ccs_data/ccs_eval2024q3/Mitochondria/subread/9948_subreads.smc_all_reads.aligned.bam";
-        let mut bam_reader = bam::Reader::from_path(aligned_bam_path).unwrap();
-        let mut cnt = 0;
-        for (i, record) in bam_reader.records().enumerate() {
-            let record = record.unwrap();
-            if record.reference_start() == 0 {
-                continue;
-            }
-            cnt += 1;
-            println!("{:?}, ref_start:{}", record.cigar(), record.reference_start());
-            if cnt > 10 {
-                break;
-            }
-        }
-
-    }
-
     #[test]
     fn test_logic_comp() {
         let mut a = true;
@@ -492,47 +464,6 @@ mod test {
         a &= false;
         println!("{}", a);
     }
-
-
-    #[test]
-    fn test_stat_record_core2() {
-        let aligned_bam_path = "/data/ccs_data/ccs_eval2024q3/Ludaopei/subread/Sample3_subreads.aligned.bam";
-        let ref_fasta = "/data/ccs_data/ccs_eval2024q3/Ludaopei/ref/Sample3.fa";
-        let mut vcf_bufreader = BufReader::new(fs::File::open("/data/ccs_data/ccs_eval2024q3/Ludaopei/ref/Sample3.vcf").unwrap());
-        let hc_variants = Some(VcfInfo::new(&mut vcf_bufreader));
-        let ref_fasta = FastaFile::new(ref_fasta);
-        let mut bam_reader = bam::Reader::from_path(aligned_bam_path).unwrap();
-        let mut cnt = 0;
-        for (i, record) in bam_reader.records().enumerate() {
-            let record = record.unwrap();
-            println!("{:?}, ref_start:{}, ref_end:{}", record.cigar(), record.reference_start(), record.reference_end());
-            let record = RecordReplica::from_record(&record);
-            let stat_info = stat_record_core(record, "BCR-ABL1-P210-e14a2", ref_fasta.get_ref_name2seq(), &None, &hc_variants);
-            println!("{:?}", stat_info);
-            cnt += 1;
-            if cnt > 10 {
-                break;
-            }
-        }
-    }
-
-    #[test]
-    fn test_bam_concordance() {
-        let reffasta = "/data/ccs_data/ccs_eval2024q3/Ludaopei/ref/Sample3.fa".to_string();
-        let aligned_bam = "/data/ccs_data/ccs_eval2024q3/Ludaopei/subread/Sample3_subreads.aligned.bam".to_string();
-        let hcvariants = "/data/ccs_data/ccs_eval2024q3/Ludaopei/ref/Sample3.vcf".to_string();
-        let args = &Cli { reffasta: reffasta, aligned_bam: aligned_bam, hcregions: None, hcvariants: Some(hcvariants), chrom: None };
-        bam_concordance(args).unwrap();
-    }
-
-    #[test]
-    fn test_print() {
-
-        println!("aa\
-        bb");
-
-    }
-
 
 }
 
