@@ -243,7 +243,7 @@ pub fn build_bam_record_from_mapping(
     }
 
     if let Some(ch_) = query_record.ch {
-        bam_record.push_aux(b"ch", Aux::U16(ch_ as u16)).unwrap();
+        bam_record.push_aux(b"ch", Aux::U32(ch_ as u32)).unwrap();
     }
 
     if let Some(rq_) = query_record.rq {
