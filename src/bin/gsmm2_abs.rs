@@ -1,24 +1,9 @@
 
-use clap::{self, Parser, Subcommand, Args};
+use clap::{self, Parser};
 use gskits::{file_reader::{bed_reader::BedInfo, vcf_reader::VcfInfo}, gsbam::bam_record_ext::BamRecordExt, pbar};
 
 #[derive(Parser)]
 pub struct Cli {
-
-    #[command(subcommand)]
-    pub command: Subcommands
-
-}
-
-
-#[derive(Subcommand)]
-pub enum Subcommands {
-    BamConcordance(BamConcordanceArgs)
-}
-
-
-#[derive(Args)]
-pub struct BamConcordanceArgs {
     pub reffasta: String,
     pub aligned_bam: String,
 
@@ -348,7 +333,7 @@ fn stat_record_core(record: RecordReplica, ref_name: &str, references: &HashMap<
 }
 
 
-pub fn bam_concordance(args: &BamConcordanceArgs) -> anyhow::Result<()> {
+pub fn bam_concordance(args: &Cli) -> anyhow::Result<()> {
     let bed_filepath = args.hcregions.clone();
     let bed_thread = thread::spawn(
         move || get_hc_regions(bed_filepath.as_ref().and_then(|v| Some(v.as_str()))));
@@ -442,14 +427,9 @@ pub fn bam_concordance(args: &BamConcordanceArgs) -> anyhow::Result<()> {
 
 
 fn main() {
-    let args = cli::Cli::parse();
+    let args = Cli::parse();
 
-    match args.command {
-        Subcommands::BamConcordance(bam_concordance_args) => {
-            bam_concordance::bam_concordance(&bam_concordance_args).unwrap();
-        }
-        _ => panic!("Not Implemented yet"),
-    }
+    bam_concordance(&args);
     
 }
 
