@@ -1,6 +1,6 @@
 
 use clap::{self, Parser};
-use gskits::{file_reader::{bed_reader::BedInfo, vcf_reader::VcfInfo}, gsbam::bam_record_ext::BamRecordExt, pbar};
+use gskits::{fastx_reader::fasta_reader::FastaFileReader, file_reader::{bed_reader::BedInfo, vcf_reader::VcfInfo}, gsbam::bam_record_ext::BamRecordExt, pbar};
 
 #[derive(Parser)]
 pub struct Cli {
@@ -82,7 +82,26 @@ impl RecordReplica {
     }
 }
 
+pub struct FastaFile {
+    ref_name2seq: HashMap<String, String>
+}
 
+impl FastaFile {
+    
+    pub fn new(filepath: &str) -> Self {
+        let reader = FastaFileReader::new(filepath.to_string());
+        Self { ref_name2seq: reader.into_iter().map(|record| (record.name, record.seq)).collect::<HashMap<String, String>>() }
+    }
+
+    pub fn get_ref_seq(&self, refname: &str) -> Option<&str> {
+        self.ref_name2seq.get(refname).and_then(|v| Some(v.as_str()))
+    }
+
+    pub fn get_ref_name2seq(&self) -> &HashMap<String, String> {
+        &self.ref_name2seq
+    }
+
+}
 
 #[derive(Debug)]
 struct Stat {
@@ -429,7 +448,7 @@ pub fn bam_concordance(args: &Cli) -> anyhow::Result<()> {
 fn main() {
     let args = Cli::parse();
 
-    bam_concordance(&args);
+    bam_concordance(&args).unwrap();
     
 }
 
@@ -437,8 +456,11 @@ fn main() {
 mod test {
     use std::{fs, io::BufReader};
 
+    use gskits::file_reader::vcf_reader::VcfInfo;
     use rust_htslib::bam::{self, ext::BamRecordExtensions, Read};
 
+
+    use crate::{Cli, stat_record_core, FastaFile, RecordReplica};
 
     use super::bam_concordance;
     #[test]
@@ -497,7 +519,7 @@ mod test {
         let reffasta = "/data/ccs_data/ccs_eval2024q3/Ludaopei/ref/Sample3.fa".to_string();
         let aligned_bam = "/data/ccs_data/ccs_eval2024q3/Ludaopei/subread/Sample3_subreads.aligned.bam".to_string();
         let hcvariants = "/data/ccs_data/ccs_eval2024q3/Ludaopei/ref/Sample3.vcf".to_string();
-        let args = &BamConcordanceArgs { reffasta: reffasta, aligned_bam: aligned_bam, hcregions: None, hcvariants: Some(hcvariants), chrom: None };
+        let args = &Cli { reffasta: reffasta, aligned_bam: aligned_bam, hcregions: None, hcvariants: Some(hcvariants), chrom: None };
         bam_concordance(args).unwrap();
     }
 
