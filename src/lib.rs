@@ -294,6 +294,10 @@ pub fn build_bam_record_from_mapping(
         }
     }
 
+    if let Some(be_) = &query_record.be {
+        bam_record.push_aux(b"be", Aux::ArrayU32(AuxArray::from(be_))).unwrap();
+    }
+
     bam_record
 }
 
