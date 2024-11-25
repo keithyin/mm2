@@ -664,9 +664,9 @@ checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 
 [[package]]
 name = "gskits"
-version = "0.8.4"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0060ff0685e3b54df862f20d0782b357e6f1e5231e6acfa6929bafb657210ae"
+checksum = "82c3d050d6a616952712d637d02a273c69dc8b8c3a824b6559aba545327863d3"
 dependencies = [
  "anyhow",
  "bio 2.0.3",
@@ -680,9 +680,9 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.15.1"
+version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a9bfc1af68b1726ea47d3d5109de126281def866b33970e10fbab11b5dafab3"
+checksum = "bf151400ff0baff5465007dd2f3e717f3fe502074ca563069ce3a6629d07b289"
 
 [[package]]
 name = "heck"
@@ -1108,7 +1108,7 @@ dependencies = [
 
 [[package]]
 name = "mm2"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "anyhow",
  "bio 1.6.0",
