@@ -1,18 +1,205 @@
 use std::thread;
 
-use clap::Parser;
 use gskits::fastx_reader::read_fastx;
 use gskits::{
     fastx_reader::fasta_reader::FastaFileReader,
     samtools::{samtools_bai, sort_by_coordinates},
 };
+use mm2::params::{AlignParams, IndexParams, MapParams, OupParams};
 use mm2::{
-    align_worker,
-    bam_writer::{write_bam_worker, BamOupArgs},
-    build_aligner,
-    cli::{self, ReadsToRefAlignArgs},
-    query_seq_sender, targets_to_targetsidx,
+    align_worker, bam_writer::write_bam_worker, build_aligner, query_seq_sender,
+    targets_to_targetsidx,
 };
+
+use std::str::FromStr;
+
+use clap::{self, Args, Parser, Subcommand};
+
+#[derive(Debug, Parser, Clone)]
+#[command(version, about, long_about=None)]
+pub struct Cli {
+    #[arg(long = "threads")]
+    pub threads: Option<usize>,
+
+    #[arg(long="preset", default_value_t=String::from_str("map-ont").unwrap(), 
+        help="read https://lh3.github.io/minimap2/minimap2.html for more details")]
+    pub preset: String,
+
+    #[command(subcommand)]
+    pub commands: Commands,
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum Commands {
+    Index(IndexArgs),
+    Align(ReadsToRefAlignArgs),
+}
+
+#[derive(Debug, Args, Clone, Copy, Default)]
+pub struct IndexArgs {
+    #[arg(long, help = "minimizer kmer")]
+    pub kmer: Option<usize>,
+
+    #[arg(long, help = "minimizer window size")]
+    pub wins: Option<usize>,
+}
+
+impl IndexArgs {
+    fn to_index_params(&self) -> IndexParams {
+        let mut param = IndexParams::new();
+        param = if let Some(kmer) = self.kmer {
+            param.set_kmer(kmer)
+        } else {
+            param
+        };
+
+        param = if let Some(wins) = self.wins {
+            param.set_wins(wins)
+        } else {
+            param
+        };
+
+        param
+    }
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct ReadsToRefAlignArgs {
+    #[command(flatten)]
+    pub io_args: IoArgs,
+
+    #[command(flatten)]
+    pub index_args: IndexArgs,
+
+    #[command(flatten)]
+    pub map_args: MapArgs,
+
+    #[command(flatten)]
+    pub align_args: AlignArgs,
+
+    #[command(flatten)]
+    pub oup_args: OupArgs,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct IoArgs {
+    #[arg(
+        short = 'q',
+        help = "query file paths, 
+    if multiple query_filepath are provided, 
+    their query_names will be rewriten to ___0, ___1, and so on, 
+    based on the order of the filenames. valid file format bam/fa/fq",
+        required = true
+    )]
+    pub query: Vec<String>,
+
+    /// target.fasta
+    #[arg(long = "target", short = 't', group = "target_group")]
+    pub target: Option<String>,
+    /// mmi file
+    #[arg(long = "indexedTarget", group = "target_group")]
+    pub indexed_target: Option<String>,
+
+    #[arg(
+        short = 'p',
+        help = "output a file named ${p}.bam",
+        required = true,
+        requires = "target_group"
+    )]
+    pub prefix: String,
+}
+
+impl IoArgs {
+    pub fn get_oup_path(&self) -> String {
+        format!("{}.bam", self.prefix)
+    }
+}
+
+#[derive(Debug, Args, Clone, Default)]
+pub struct MapArgs {}
+
+impl MapArgs {
+    pub fn to_map_params(&self) -> MapParams {
+        MapParams::default()
+    }
+}
+
+#[derive(Debug, Args, Clone, Default)]
+pub struct AlignArgs {
+    #[arg(short = 'm', help = "matching_score>=0, recommend 2")]
+    matching_score: Option<i32>,
+
+    #[arg(short = 'M', help = "mismatch_penalty >=0, recommend 4")]
+    mismatch_penalty: Option<i32>,
+
+    #[arg(short = 'o', help = "gap_open_penalty >=0, recommend 4,24")]
+    gap_open_penalty: Option<String>,
+
+    #[arg(short = 'e', help = "gap_extension_penalty >=0, recommend 2,1")]
+    gap_extension_penalty: Option<String>,
+}
+
+impl AlignArgs {
+    pub fn to_align_params(&self) -> AlignParams {
+        let mut param = AlignParams::new();
+        param = if let Some(ms) = self.matching_score {
+            param.set_m_score(ms)
+        } else {
+            param
+        };
+
+        param = if let Some(mms) = self.mismatch_penalty {
+            param.set_mm_score(mms)
+        } else {
+            param
+        };
+
+        param = if let Some(ref go) = self.gap_open_penalty {
+            param.set_gap_open_penalty(go.to_string())
+        } else {
+            param
+        };
+
+        param = if let Some(ref ge) = self.gap_extension_penalty {
+            param.set_gap_extension_penalty(ge.to_string())
+        } else {
+            param
+        };
+
+        param
+    }
+}
+
+#[derive(Debug, Args, Clone, Default)]
+pub struct OupArgs {
+    #[arg(long = "noSeco", help = "discard secondary alignment")]
+    pub discard_secondary: bool,
+
+    #[arg(long = "noSupp", help = "discard supplementary alignment")]
+    pub discard_supplementary: bool,
+
+    #[arg(long = "noMar", help = "discard multiple alignment reads")]
+    pub discard_multi_mapping_reads: bool,
+
+    #[arg(long="oupIyT", default_value_t=-1.0, help="remove the record from the result bam file when the identity < identity_threshold")]
+    pub oup_identity_threshold: f32,
+
+    #[arg(long="oupCovT", default_value_t=-1.0, help="remove the record from the result bam file when the coverage < coverage_threshold")]
+    pub oup_coverage_threshold: f32,
+}
+
+impl OupArgs {
+    fn to_oup_params(&self) -> OupParams {
+        let mut param = OupParams::new();
+        param = param
+            .set_discard_secondary(self.discard_secondary)
+            .set_discard_supplementary(self.discard_supplementary)
+            .set_oup_identity_threshold(self.oup_identity_threshold)
+            .set_oup_coverage_threshold(self.oup_coverage_threshold)
+            .set_discard_multi_align_reads(self.discard_multi_mapping_reads);
+        param
+    }
+}
 
 fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignArgs) {
     let target_filename = args
@@ -25,12 +212,17 @@ fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignA
     let targets = read_fastx(fa_iter);
     let target2idx = targets_to_targetsidx(&targets);
 
+    let index_params = args.index_args.to_index_params();
+    let map_params = args.map_args.to_map_params();
+    let align_params = args.align_args.to_align_params();
+    let oup_params = args.oup_args.to_oup_params();
+
     let aligners = build_aligner(
         preset,
-        &args.index_args,
-        &args.map_args,
-        &args.align_args,
-        &args.oup_args,
+        &index_params,
+        &map_params,
+        &align_params,
+        &oup_params,
         &targets,
     );
 
@@ -53,7 +245,15 @@ fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignA
         for _ in 0..num_threads {
             let qs_recv_ = qs_recv.clone();
             let align_res_sender_ = align_res_sender.clone();
-            s.spawn(move || align_worker(qs_recv_, align_res_sender_, aligners, target2idx));
+            s.spawn(move || {
+                align_worker(
+                    qs_recv_,
+                    align_res_sender_,
+                    aligners,
+                    target2idx,
+                    &oup_params,
+                )
+            });
         }
         drop(qs_recv);
         drop(align_res_sender);
@@ -62,7 +262,7 @@ fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignA
             align_res_recv,
             target2idx,
             &args.io_args.get_oup_path(),
-            &BamOupArgs::from(&args.oup_args),
+            &oup_params,
             "gsmm2",
             env!("CARGO_PKG_VERSION"),
             true,
@@ -73,16 +273,15 @@ fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignA
 }
 
 fn main() {
-    let args = cli::Cli::parse();
+    let args = Cli::parse();
 
     let preset = &args.preset;
     let align_threads = args.threads.clone();
 
     match args.commands {
-        cli::Commands::Align(ref args) => {
+        Commands::Align(ref args) => {
             alignment(preset, align_threads, args);
         }
-
         _ => panic!("not implemented yet"),
     }
 }

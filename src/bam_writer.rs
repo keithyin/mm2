@@ -8,21 +8,33 @@ use gskits::{
 };
 use rust_htslib::bam::{header::HeaderRecord, record::Aux, Header};
 
-use crate::{cli, AlignResult};
+use crate::{params::OupParams, AlignResult};
 
 pub struct BamOupArgs {
-    pub iy_threshold: f32,
-    pub ec_threshold: f32,
-    pub no_sencondary: bool,
-    pub no_supplementry: bool,
+    pub iy_t: f32,
+    pub ec_t: f32,
+    pub no_seco: bool,
+    pub no_supp: bool,
+    pub no_ma: bool
 }
 impl BamOupArgs {
+
+    pub fn new(iy_t: f32, ec_t: f32, no_seco: bool, no_supp: bool, no_ma: bool) -> Self {
+        Self{
+            iy_t,
+            ec_t,
+            no_seco,
+            no_supp,
+            no_ma
+        }
+    }
+
     pub fn valid(&self, record: &BamRecord) -> bool {
-        if self.no_sencondary && record.is_secondary() {
+        if self.no_seco && record.is_secondary() {
             return false;
         }
 
-        if self.no_supplementry && record.is_supplementary() {
+        if self.no_supp && record.is_supplementary() {
             return false;
         }
 
@@ -30,11 +42,11 @@ impl BamOupArgs {
         let iy = record_ext.compute_identity();
         let ec = record_ext.compute_query_coverage();
 
-        if iy < self.iy_threshold {
+        if iy < self.iy_t {
             return false;
         }
 
-        if ec < self.ec_threshold {
+        if ec < self.ec_t {
             return false;
         }
 
@@ -42,23 +54,13 @@ impl BamOupArgs {
     }
 }
 
-impl From<&cli::OupArgs> for BamOupArgs {
-    fn from(value: &cli::OupArgs) -> Self {
-        Self {
-            iy_threshold: value.oup_identity_threshold,
-            ec_threshold: value.oup_coverage_threshold,
-            no_sencondary: value.discard_secondary,
-            no_supplementry: value.discard_supplementary,
-        }
-    }
-}
 
 /// targetidx: &HashMap<target_name, (idx, target_len)>
 pub fn write_bam_worker(
     recv: Receiver<AlignResult>,
     target_idx: &HashMap<String, (usize, usize)>,
     o_path: &str,
-    oup_args: &BamOupArgs,
+    oup_args: &OupParams,
     pg_name: &str,
     version: &str,
     enable_pb: bool,

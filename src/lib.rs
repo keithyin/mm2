@@ -1,13 +1,11 @@
 pub mod bam_writer;
-pub mod cli;
+pub mod params;
 use std::{collections::HashMap, thread};
 
-use cli::{AlignArgs, IndexArgs, MapArgs, OupArgs, TOverrideAlignerParam};
 use crossbeam::channel::{Receiver, Sender};
-use gskits::{
-    dna::reverse_complement, ds::ReadInfo, fastx_reader::fasta_reader::FastaFileReader,
-};
+use gskits::{dna::reverse_complement, ds::ReadInfo, fastx_reader::fasta_reader::FastaFileReader};
 use minimap2::Aligner;
+use params::{AlignParams, IndexParams, MapParams, OupParams, TOverrideAlignerParam};
 use rust_htslib::bam::{
     record::{Aux, AuxArray, Cigar, CigarString},
     Read,
@@ -23,10 +21,10 @@ pub struct AlignResult {
 
 pub fn build_aligner(
     preset: &str,
-    index_args: &IndexArgs,
-    map_args: &MapArgs,
-    align_args: &AlignArgs,
-    oup_args: &OupArgs,
+    index_args: &IndexParams,
+    map_args: &MapParams,
+    align_args: &AlignParams,
+    oup_args: &OupParams,
     targets: &Vec<ReadInfo>,
 ) -> Vec<Aligner> {
     let aligners = thread::scope(|s| {
@@ -123,9 +121,13 @@ pub fn align_worker(
     align_res_sender: Sender<AlignResult>,
     aligners: &Vec<Aligner>,
     target_idx: &HashMap<String, (usize, usize)>,
+    oup_params: &OupParams,
 ) {
     for query_record in query_record_recv {
         let records = align_single_query_to_targets(&query_record, aligners, target_idx);
+        if oup_params.discard_multi_align_reads && records.len() > 1 {
+            continue;
+        }
         align_res_sender.send(AlignResult { records }).unwrap();
     }
 }
@@ -178,9 +180,8 @@ pub fn build_bam_record_from_mapping(
         minimap2::Strand::Reverse => {
             is_rev = true;
             Some(reverse_complement(seq))
-        },
+        }
     };
-
 
     if is_rev {
         seq = rev_seq.as_ref().unwrap();
@@ -206,7 +207,6 @@ pub fn build_bam_record_from_mapping(
         vec![255; seq.len()]
     };
 
-
     bam_record.set(
         query_record.name.as_bytes(),
         Some(&cigar_str),
@@ -215,7 +215,6 @@ pub fn build_bam_record_from_mapping(
     );
     if is_rev {
         bam_record.set_reverse();
-
     }
 
     // reference start
@@ -270,32 +269,46 @@ pub fn build_bam_record_from_mapping(
     if let Some(dw_) = &query_record.dw {
         if is_rev {
             let dw_ = dw_.iter().copied().rev().collect::<Vec<_>>();
-            bam_record.push_aux(b"dw", Aux::ArrayU8(AuxArray::from(&dw_))).unwrap();
+            bam_record
+                .push_aux(b"dw", Aux::ArrayU8(AuxArray::from(&dw_)))
+                .unwrap();
         } else {
-            bam_record.push_aux(b"dw", Aux::ArrayU8(AuxArray::from(dw_))).unwrap();
+            bam_record
+                .push_aux(b"dw", Aux::ArrayU8(AuxArray::from(dw_)))
+                .unwrap();
         }
     }
 
     if let Some(ar_) = &query_record.ar {
         if is_rev {
             let ar_ = ar_.iter().copied().rev().collect::<Vec<_>>();
-            bam_record.push_aux(b"ar", Aux::ArrayU8(AuxArray::from(&ar_))).unwrap();
+            bam_record
+                .push_aux(b"ar", Aux::ArrayU8(AuxArray::from(&ar_)))
+                .unwrap();
         } else {
-            bam_record.push_aux(b"ar", Aux::ArrayU8(AuxArray::from(ar_))).unwrap();
+            bam_record
+                .push_aux(b"ar", Aux::ArrayU8(AuxArray::from(ar_)))
+                .unwrap();
         }
     }
 
     if let Some(cr_) = &query_record.cr {
         if is_rev {
             let cr_ = cr_.iter().copied().rev().collect::<Vec<_>>();
-            bam_record.push_aux(b"cr", Aux::ArrayU8(AuxArray::from(&cr_))).unwrap();
+            bam_record
+                .push_aux(b"cr", Aux::ArrayU8(AuxArray::from(&cr_)))
+                .unwrap();
         } else {
-            bam_record.push_aux(b"cr", Aux::ArrayU8(AuxArray::from(cr_))).unwrap();
+            bam_record
+                .push_aux(b"cr", Aux::ArrayU8(AuxArray::from(cr_)))
+                .unwrap();
         }
     }
 
     if let Some(be_) = &query_record.be {
-        bam_record.push_aux(b"be", Aux::ArrayU32(AuxArray::from(be_))).unwrap();
+        bam_record
+            .push_aux(b"be", Aux::ArrayU32(AuxArray::from(be_)))
+            .unwrap();
     }
 
     bam_record
@@ -394,10 +407,10 @@ mod tests {
         let targets = read_fastx(fa_iter);
         let aligners = build_aligner(
             "map-ont",
-            &IndexArgs::default(),
-            &MapArgs::default(),
-            &AlignArgs::default(),
-            &OupArgs::default(),
+            &IndexParams::default(),
+            &MapParams::default(),
+            &AlignParams::default(),
+            &OupParams::default(),
             &targets,
         );
         let target2idx = targets_to_targetsidx(&targets);
