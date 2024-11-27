@@ -8,9 +8,52 @@ pub trait TOverrideAlignerParam {
     fn modify_aligner(&self, aligner: &mut Aligner);
 }
 
+#[derive(Default)]
 pub struct InputFilterParams {
-    np_range: Range<i32>,
-    rq_range: Range<f32>,
+    pub np_range: Option<Range<i32>>,
+    pub rq_range: Option<Range<f32>>,
+}
+
+
+
+impl InputFilterParams {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_np_range(mut self, np_range_str: &str) -> Self {
+        self.np_range = Some(Range::<i32>::new(np_range_str));
+        self
+    }
+
+    pub fn set_rq_range(mut self, rq_range_str: &str) -> Self {
+        self.rq_range = Some(Range::<f32>::new(rq_range_str));
+        self
+    }
+
+    pub fn valid(&self, record: &BamRecord) -> bool {
+
+        let record_ext = BamRecordExt::new(record);
+        
+        if let Some(np_range_) = &self.np_range {
+            if let Some(np) = record_ext.get_np() {
+                if !np_range_.within_range(np as i32) {
+                    return false;
+                }
+            }
+        }
+
+        if let Some(rq_range_) = &self.rq_range {
+            if let Some(rq) = record_ext.get_rq() {
+                if !rq_range_.within_range(rq) {
+                    return false;
+                }
+            }
+        }
+
+        true
+
+    }
 }
 
 #[derive(Debug, Clone, Default)]

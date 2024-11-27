@@ -5,7 +5,7 @@ use gskits::{
     fastx_reader::fasta_reader::FastaFileReader,
     samtools::{samtools_bai, sort_by_coordinates},
 };
-use mm2::params::{AlignParams, IndexParams, MapParams, OupParams};
+use mm2::params::{AlignParams, IndexParams, InputFilterParams, MapParams, OupParams};
 use mm2::{
     align_worker, bam_writer::write_bam_worker, build_aligner, query_seq_sender,
     targets_to_targetsidx,
@@ -107,11 +107,40 @@ pub struct IoArgs {
         requires = "target_group"
     )]
     pub prefix: String,
+
+    #[arg(
+        long = "np-range",
+        help = "1-3,5,7-9 means [[1, 3], [5, 5], [7, 9]]. only valid for bam input that contains np field"
+    )]
+    pub np_range: Option<String>,
+
+    #[arg(
+        long = "rq-range",
+        help = "0.9~1.1 means 0.9<=rq<=1.1. only valid for bam input that contains rq field"
+    )]
+    pub rq_range: Option<String>,
 }
 
 impl IoArgs {
     pub fn get_oup_path(&self) -> String {
         format!("{}.bam", self.prefix)
+    }
+
+    pub fn to_input_filter_params(&self) -> InputFilterParams {
+        let mut param = InputFilterParams::new();
+        param = if let Some(ref np_range_str) = self.np_range {
+            param.set_np_range(np_range_str)
+        } else {
+            param
+        };
+
+        param = if let Some(ref rq_range_str) = self.rq_range {
+            param.set_rq_range(rq_range_str)
+        } else {
+            param
+        };
+
+        param
     }
 }
 
@@ -216,6 +245,7 @@ fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignA
     let map_params = args.map_args.to_map_params();
     let align_params = args.align_args.to_align_params();
     let oup_params = args.oup_args.to_oup_params();
+    let inp_filter_params = args.io_args.to_input_filter_params();
 
     let aligners = build_aligner(
         preset,
@@ -234,10 +264,10 @@ fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignA
     thread::scope(|s| {
         let aligners = &aligners;
         let target2idx = &target2idx;
-
+        let inp_filter_params = &inp_filter_params;
         let (qs_sender, qs_recv) = crossbeam::channel::bounded(1000);
         s.spawn(move || {
-            query_seq_sender(&args.io_args.query, qs_sender);
+            query_seq_sender(&args.io_args.query, qs_sender, inp_filter_params);
         });
 
         let num_threads = align_threads.unwrap_or(num_cpus::get_physical());

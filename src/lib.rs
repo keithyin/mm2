@@ -5,7 +5,9 @@ use std::{collections::HashMap, thread};
 use crossbeam::channel::{Receiver, Sender};
 use gskits::{dna::reverse_complement, ds::ReadInfo, fastx_reader::fasta_reader::FastaFileReader};
 use minimap2::Aligner;
-use params::{AlignParams, IndexParams, MapParams, OupParams, TOverrideAlignerParam};
+use params::{
+    AlignParams, IndexParams, InputFilterParams, MapParams, OupParams, TOverrideAlignerParam,
+};
 use rust_htslib::bam::{
     record::{Aux, AuxArray, Cigar, CigarString},
     Read,
@@ -68,7 +70,11 @@ pub fn build_aligner(
     aligners
 }
 
-pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<ReadInfo>) {
+pub fn query_seq_sender(
+    filenames: &Vec<String>,
+    sender: Sender<ReadInfo>,
+    input_filter_params: &InputFilterParams,
+) {
     let mut file_idx = 0;
     for filename in filenames {
         let qname_suffix = if filenames.len() == 1 {
@@ -90,12 +96,14 @@ pub fn query_seq_sender(filenames: &Vec<String>, sender: Sender<ReadInfo>) {
             bam_h.set_threads(4).unwrap();
             for record in bam_h.records() {
                 let record = record.unwrap();
-                sender
-                    .send(ReadInfo::from_bam_record(
-                        &record,
-                        qname_suffix.as_ref().map(|v| v.as_str()),
-                    ))
-                    .unwrap();
+                if input_filter_params.valid(&record) {
+                    sender
+                        .send(ReadInfo::from_bam_record(
+                            &record,
+                            qname_suffix.as_ref().map(|v| v.as_str()),
+                        ))
+                        .unwrap();
+                }
             }
         } else if filename.ends_with("fq") || filename.ends_with("fastq") {
             let fa_iter = FastaFileReader::new(filename.to_string());
