@@ -4,7 +4,7 @@ use std::{collections::HashMap, thread};
 
 use crossbeam::channel::{Receiver, Sender};
 use gskits::{dna::reverse_complement, ds::ReadInfo, fastx_reader::fasta_reader::FastaFileReader};
-use minimap2::{Aligner, Built, PresetSet};
+use minimap2::{Aligner, Built};
 use params::{
     AlignParams, IndexParams, InputFilterParams, MapParams, OupParams, TOverrideAlignerParam,
 };
