@@ -4,7 +4,7 @@ use std::{collections::HashMap, thread};
 
 use crossbeam::channel::{Receiver, Sender};
 use gskits::{dna::reverse_complement, ds::ReadInfo, fastx_reader::fasta_reader::FastaFileReader};
-use minimap2::Aligner;
+use minimap2::{Aligner, Built, PresetSet};
 use params::{
     AlignParams, IndexParams, InputFilterParams, MapParams, OupParams, TOverrideAlignerParam,
 };
@@ -28,14 +28,14 @@ pub fn build_aligner(
     align_args: &AlignParams,
     oup_args: &OupParams,
     targets: &Vec<ReadInfo>,
-) -> Vec<Aligner> {
+) -> Vec<Aligner<Built>> {
     let aligners = thread::scope(|s| {
         let mut handles = vec![];
         for target in targets {
             let hd = s.spawn(|| {
-                let mut aligner = Aligner::builder();
+                let aligner = Aligner::builder();
 
-                aligner = match preset {
+                let mut aligner = match preset {
                     "map-ont" => aligner.map_ont(),
                     "map-pb" => aligner.map_pb(),
                     "map-hifi" => aligner.map_hifi(),
@@ -47,8 +47,9 @@ pub fn build_aligner(
                 map_args.modify_aligner(&mut aligner);
                 align_args.modify_aligner(&mut aligner);
                 oup_args.modify_aligner(&mut aligner);
+                
 
-                aligner = aligner
+                let aligner = aligner
                     .with_index_threads(4)
                     .with_cigar()
                     .with_sam_out()
@@ -64,7 +65,7 @@ pub fn build_aligner(
         handles
             .into_iter()
             .map(|hd| hd.join().unwrap())
-            .collect::<Vec<Aligner>>()
+            .collect::<Vec<Aligner<Built>>>()
     });
 
     aligners
@@ -127,7 +128,7 @@ pub fn query_seq_sender(
 pub fn align_worker(
     query_record_recv: Receiver<gskits::ds::ReadInfo>,
     align_res_sender: Sender<AlignResult>,
-    aligners: &Vec<Aligner>,
+    aligners: &Vec<Aligner<Built>>,
     target_idx: &HashMap<String, (usize, usize)>,
     oup_params: &OupParams,
 ) {
@@ -142,7 +143,7 @@ pub fn align_worker(
 
 pub fn align_single_query_to_targets(
     query_record: &gskits::ds::ReadInfo,
-    aligners: &Vec<Aligner>,
+    aligners: &Vec<Aligner<Built>>,
     target_idx: &HashMap<String, (usize, usize)>,
 ) -> Vec<BamRecord> {
     let mut align_records = vec![];
@@ -154,6 +155,7 @@ pub fn align_single_query_to_targets(
                 true,
                 None,
                 Some(&[67108864]), // 67108864 eqx
+                Some(query_record.name.as_bytes())
             )
             .unwrap()
         {
@@ -232,7 +234,7 @@ pub fn build_bam_record_from_mapping(
     // bam_record.reference_end()
     bam_record.set_mapq(hit.mapq as u8);
 
-    bam_record.set_tid(target_idx.get(hit.target_name.as_ref().unwrap()).unwrap().0 as i32);
+    bam_record.set_tid(target_idx.get(hit.target_name.as_ref().unwrap().as_str()).unwrap().0 as i32);
     bam_record.set_mtid(-1);
 
     if !hit.is_primary {

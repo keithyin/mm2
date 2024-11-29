@@ -2,10 +2,10 @@ use gskits::{
     gsbam::bam_record_ext::{BamRecord, BamRecordExt},
     utils::Range,
 };
-use minimap2::Aligner;
+use minimap2::{Aligner, PresetSet};
 
 pub trait TOverrideAlignerParam {
-    fn modify_aligner(&self, aligner: &mut Aligner);
+    fn modify_aligner(&self, aligner: &mut Aligner<PresetSet>);
 }
 
 #[derive(Default)]
@@ -91,7 +91,7 @@ impl AlignParams {
 }
 
 impl TOverrideAlignerParam for AlignParams {
-    fn modify_aligner(&self, aligner: &mut Aligner) {
+    fn modify_aligner(&self, aligner: &mut Aligner<PresetSet>) {
         if let Some(m) = self.matching_score {
             aligner.mapopt.a = m;
         }
@@ -126,7 +126,7 @@ impl TOverrideAlignerParam for AlignParams {
 pub struct MapParams {}
 
 impl TOverrideAlignerParam for MapParams {
-    fn modify_aligner(&self, _aligner: &mut Aligner) {}
+    fn modify_aligner(&self, _aligner: &mut Aligner<PresetSet>) {}
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -152,7 +152,7 @@ impl IndexParams {
 }
 
 impl TOverrideAlignerParam for IndexParams {
-    fn modify_aligner(&self, aligner: &mut Aligner) {
+    fn modify_aligner(&self, aligner: &mut Aligner<PresetSet>) {
         if let Some(k) = self.kmer {
             aligner.idxopt.k = k as i16;
         }
@@ -240,7 +240,7 @@ impl OupParams {
 }
 
 impl TOverrideAlignerParam for OupParams {
-    fn modify_aligner(&self, aligner: &mut Aligner) {
+    fn modify_aligner(&self, aligner: &mut Aligner<PresetSet>) {
         if self.discard_secondary {
             aligner.mapopt.flag &= !0x1000000000;
         }
