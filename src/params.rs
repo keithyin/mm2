@@ -102,7 +102,7 @@ impl TOverrideAlignerParam for AlignParams {
 
         if let Some(gap_o) = &self.gap_open_penalty {
             if gap_o.contains(",") {
-                let (o1, o2) = gap_o.rsplit_once(".").unwrap();
+                let (o1, o2) = gap_o.rsplit_once(",").unwrap();
                 aligner.mapopt.q = o1.parse::<i32>().unwrap();
                 aligner.mapopt.q2 = o2.parse::<i32>().unwrap();
             } else {
@@ -112,7 +112,7 @@ impl TOverrideAlignerParam for AlignParams {
 
         if let Some(gap_e) = &self.gap_extension_penalty {
             if gap_e.contains(",") {
-                let (e1, e2) = gap_e.rsplit_once(".").unwrap();
+                let (e1, e2) = gap_e.rsplit_once(",").unwrap();
                 aligner.mapopt.e = e1.parse::<i32>().unwrap();
                 aligner.mapopt.e2 = e2.parse::<i32>().unwrap();
             } else {
