@@ -1,10 +1,13 @@
 [package]
 name = "mm2"
-version = "0.13.4"
+version = "0.13.5"
 edition = "2021"
 description = "minimap2 frontend"
 license = "MIT"
 repository ="https://github.com/keithyin/mm2"
+exclude = [
+    "test_data/*"
+]
 
 [dependencies]
 clap = {version="4.4", features=["derive"]}
