@@ -110,13 +110,13 @@ pub struct IoArgs {
 
     #[arg(
         long = "np-range",
-        help = "1-3,5,7-9 means [[1, 3], [5, 5], [7, 9]]. only valid for bam input that contains np field"
+        help = "1:3,5,7:9 means [[1, 3], [5, 5], [7, 9]]. only valid for bam input that contains np field"
     )]
     pub np_range: Option<String>,
 
     #[arg(
         long = "rq-range",
-        help = "0.9~1.1 means 0.9<=rq<=1.1. only valid for bam input that contains rq field"
+        help = "0.9:1.1 means 0.9<=rq<=1.1. only valid for bam input that contains rq field"
     )]
     pub rq_range: Option<String>,
 }
@@ -230,7 +230,10 @@ impl OupArgs {
     }
 }
 
-fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignArgs) {
+fn alignment(preset: &str, tot_threads: Option<usize>, args: &ReadsToRefAlignArgs) {
+    let tot_threads = tot_threads.unwrap_or(num_cpus::get());
+    assert!(tot_threads >= 10, "at least 10 threads are needed");
+
     let target_filename = args
         .io_args
         .target
@@ -270,9 +273,9 @@ fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignA
             query_seq_sender(&args.io_args.query, qs_sender, inp_filter_params);
         });
 
-        let num_threads = align_threads.unwrap_or(num_cpus::get_physical());
+        let align_threads = tot_threads - 8;
         let (align_res_sender, align_res_recv) = crossbeam::channel::bounded(1000);
-        for _ in 0..num_threads {
+        for _ in 0..align_threads {
             let qs_recv_ = qs_recv.clone();
             let align_res_sender_ = align_res_sender.clone();
             s.spawn(move || {
@@ -298,8 +301,8 @@ fn alignment(preset: &str, align_threads: Option<usize>, args: &ReadsToRefAlignA
             true,
         );
     });
-    sort_by_coordinates(&args.io_args.get_oup_path(), align_threads);
-    samtools_bai(&args.io_args.get_oup_path(), true, align_threads).unwrap();
+    sort_by_coordinates(&args.io_args.get_oup_path(), Some(tot_threads));
+    samtools_bai(&args.io_args.get_oup_path(), true, Some(tot_threads)).unwrap();
 }
 
 fn main() {
