@@ -1,6 +1,6 @@
 [package]
 name = "mm2"
-version = "0.13.5"
+version = "0.13.6"
 edition = "2021"
 description = "minimap2 frontend"
 license = "MIT"
@@ -25,4 +25,4 @@ uuid = { version = "1.0", features = ["v5"] }
 minimap2="0.1.21"
 num_cpus="1.16"
 crossbeam = "0.8"
-gskits="0.9"
+gskits="0.10"

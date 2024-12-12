@@ -91,7 +91,7 @@ pub fn write_bam_worker(
 
     let pb = if enable_pb {
         Some(pbar::get_spin_pb(
-            format!("writing alignment result"),
+            format!("{}: writing alignment result to {}", pg_name, o_path),
             DEFAULT_INTERVAL,
         ))
     } else {
