@@ -392,8 +392,7 @@ pub fn set_primary_alignment(records: &mut Vec<BamRecord>) {
                 Cigar::Equal(n) | Cigar::Match(n) => n as i64,
                 _ => 0,
             })
-            .reduce(|a, b| (a + b))
-            .unwrap();
+            .sum::<i64>();
         -matched
     });
 
