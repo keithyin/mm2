@@ -1109,7 +1109,7 @@ dependencies = [
 
 [[package]]
 name = "mm2"
-version = "0.13.6"
+version = "0.14.0"
 dependencies = [
  "anyhow",
  "bio 1.6.0",

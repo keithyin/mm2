@@ -1,10 +1,10 @@
 pub mod bam_writer;
 pub mod params;
-use std::{collections::HashMap, thread};
+use std::{cmp, collections::HashMap, thread};
 
 use crossbeam::channel::{Receiver, Sender};
 use gskits::{dna::reverse_complement, ds::ReadInfo, fastx_reader::fasta_reader::FastaFileReader};
-use minimap2::{Aligner, Built};
+use minimap2::{Aligner, Built, Mapping};
 use params::{
     AlignParams, IndexParams, InputFilterParams, MapParams, OupParams, TOverrideAlignerParam,
 };
@@ -47,7 +47,6 @@ pub fn build_aligner(
                 map_args.modify_aligner(&mut aligner);
                 align_args.modify_aligner(&mut aligner);
                 oup_args.modify_aligner(&mut aligner);
-                
 
                 let aligner = aligner
                     .with_index_threads(4)
@@ -146,7 +145,8 @@ pub fn align_single_query_to_targets(
     aligners: &Vec<Aligner<Built>>,
     target_idx: &HashMap<String, (usize, usize)>,
 ) -> Vec<BamRecord> {
-    let mut align_records = vec![];
+    let mut all_hits = vec![];
+
     for aligner in aligners {
         for hit in aligner
             .map(
@@ -155,7 +155,7 @@ pub fn align_single_query_to_targets(
                 true,
                 None,
                 Some(&[67108864]), // 67108864 eqx
-                Some(query_record.name.as_bytes())
+                Some(query_record.name.as_bytes()),
             )
             .unwrap()
         {
@@ -163,14 +163,19 @@ pub fn align_single_query_to_targets(
                 continue;
             }
 
-            let record = build_bam_record_from_mapping(&hit, query_record, target_idx);
-            align_records.push(record);
+            all_hits.push(hit);
+
+            // let record = build_bam_record_from_mapping(&hit, query_record, target_idx);
+            // align_records.push(record);
         }
     }
 
-    set_primary_alignment(&mut align_records);
-
-    align_records
+    set_primary_alignment_according_2_align_score(&mut all_hits, query_record.seq.len());
+    all_hits
+        .iter()
+        .map(|hit| build_bam_record_from_mapping(hit, query_record, target_idx))
+        .collect()
+    // set_primary_alignment(&mut align_records);
 }
 
 pub fn build_bam_record_from_mapping(
@@ -234,7 +239,12 @@ pub fn build_bam_record_from_mapping(
     // bam_record.reference_end()
     bam_record.set_mapq(hit.mapq as u8);
 
-    bam_record.set_tid(target_idx.get(hit.target_name.as_ref().unwrap().as_str()).unwrap().0 as i32);
+    bam_record.set_tid(
+        target_idx
+            .get(hit.target_name.as_ref().unwrap().as_str())
+            .unwrap()
+            .0 as i32,
+    );
     bam_record.set_mtid(-1);
 
     if !hit.is_primary {
@@ -402,9 +412,61 @@ pub fn set_primary_alignment(records: &mut Vec<BamRecord>) {
     });
 }
 
+pub fn set_primary_alignment_according_2_align_score(hits: &mut Vec<Mapping>, query_len: usize) {
+    if hits.is_empty() {
+        return;
+    }
+    hits.sort_by_key(|v| -v.alignment.as_ref().unwrap().alignment_score.unwrap() - if v.is_primary {1_000_000_000} else {0});
+
+    assert!(hits.first_mut().unwrap().is_primary); // assertion failed
+    assert!(!hits.first_mut().unwrap().is_supplementary);
+
+    let primary_hit = hits.first().unwrap();
+    let query_len = query_len as i32;
+    let (primary_qstart, primary_qend) = get_query_start_end(primary_hit, query_len as i32);
+
+    hits.iter_mut().skip(1).for_each(|hit| {
+        if hit.is_primary {
+            let (qstart, qend) = get_query_start_end(hit, query_len as i32);
+            let ratio = ovlp_ratio(primary_qstart, primary_qend, qstart, qend);
+            hit.is_primary = false;
+            hit.is_supplementary = ratio <= 0.5;
+        }
+    });
+}
+
+fn get_query_start_end(hit: &Mapping, query_len: i32) -> (i32, i32) {
+    match hit.strand {
+        minimap2::Strand::Forward => (hit.query_start, hit.query_end),
+        minimap2::Strand::Reverse => (query_len - hit.query_end, query_len - hit.query_start),
+    }
+}
+
+fn ovlp_ratio(s1: i32, e1: i32, s2: i32, e2: i32) -> f32 {
+    if s2 >= e1 || s1 >= e2 {
+        return 0.0;
+    }
+
+    let s = cmp::max(s1, s2);
+    let e = cmp::min(e1, e2);
+
+    let ovlp_len = e - s;
+
+    let min_len = cmp::min(e1 - s1, e2 - s2);
+
+    if min_len == 0 {
+        return 0.0;
+    }
+
+    ovlp_len as f32 / min_len as f32
+}
+
 #[cfg(test)]
 mod tests {
-    use gskits::fastx_reader::read_fastx;
+    use gskits::{
+        fastx_reader::read_fastx,
+        gsbam::{bam_header_ext::BamHeaderExt, bam_record_ext::BamRecordExt},
+    };
     use rust_htslib::bam::ext::BamRecordExtensions;
 
     use super::*;
@@ -466,4 +528,41 @@ mod tests {
         assert_eq!(records[1].is_secondary(), false);
         assert_eq!(records[2].is_secondary(), true);
     }
+
+    // #[test]
+    // fn test_align_single_query_to_target2() {
+    //     let ref_file =
+    //         "/data/ccs_data/ccs_eval2024q3/jinpu/ref_Saureus_ATCC25923.m.new.corrected.fasta";
+    //     let fa_iter = FastaFileReader::new(ref_file.to_string());
+    //     let targets = read_fastx(fa_iter);
+    //     let aligners = build_aligner(
+    //         "map-ont",
+    //         &IndexParams::default(),
+    //         &MapParams::default(),
+    //         &AlignParams::default(),
+    //         &OupParams::default(),
+    //         &targets,
+    //     );
+
+    //     let mut bam_reader = rust_htslib::bam::Reader::from_path(
+    //         "/data/ccs_data/ccs_eval2024q3/jinpu/20240711_Sync_Y0006_02_H01_Run0001_called.bam",
+    //     )
+    //     .unwrap();
+    //     bam_reader.set_threads(10).unwrap();
+
+    //     let aligner = &aligners[0];
+
+    //     for record in bam_reader.records() {
+    //         let record = record.unwrap();
+    //         let record_ext = BamRecordExt::new(&record);
+    //         let seq = record_ext.get_seq();
+    //         for hit in aligner
+    //             .map(seq.as_bytes(), false, false, None, None, None)
+    //             .unwrap()
+    //         {
+    //             println!("{:?}", hit);
+    //         }
+    //         break;
+    //     }
+    // }
 }
