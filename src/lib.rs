@@ -170,7 +170,7 @@ pub fn align_single_query_to_targets(
         }
     }
 
-    set_primary_alignment_according_2_align_score(&mut all_hits, query_record.seq.len());
+    set_primary_alignment_according_2_align_score(&mut all_hits);
     all_hits
         .iter()
         .map(|hit| build_bam_record_from_mapping(hit, query_record, target_idx))
@@ -203,6 +203,7 @@ pub fn build_bam_record_from_mapping(
         bam_record.set_reverse();
     }
 
+    // hit.query_start, hit.query_end 是相对于原始 query 而言的(即 未 reverse 的 query 而言)
     let aln_info = hit.alignment.as_ref().unwrap();
     let cigar_str = convert_mapping_cigar_to_record_cigar(
         aln_info.cigar.as_ref().unwrap(),
@@ -412,29 +413,31 @@ pub fn set_primary_alignment(records: &mut Vec<BamRecord>) {
     });
 }
 
-pub fn set_primary_alignment_according_2_align_score(hits: &mut Vec<Mapping>, query_len: usize) {
+pub fn set_primary_alignment_according_2_align_score(hits: &mut Vec<Mapping>) {
     if hits.is_empty() {
         return;
     }
-    hits.sort_by_key(|v| -v.alignment.as_ref().unwrap().alignment_score.unwrap() - if v.is_primary {1_000_000_000} else {0});
+    hits.sort_by_key(|v| {
+        -v.alignment.as_ref().unwrap().alignment_score.unwrap()
+            - if v.is_primary { 1_000_000_000 } else { 0 }
+    });
 
     assert!(hits.first_mut().unwrap().is_primary); // assertion failed
     assert!(!hits.first_mut().unwrap().is_supplementary);
 
     let primary_hit = hits.first().unwrap();
-    let query_len = query_len as i32;
-    let (primary_qstart, primary_qend) = get_query_start_end(primary_hit, query_len as i32);
+    let (primary_qstart, primary_qend) = (primary_hit.query_start, primary_hit.query_end);
 
     hits.iter_mut().skip(1).for_each(|hit| {
         if hit.is_primary {
-            let (qstart, qend) = get_query_start_end(hit, query_len as i32);
-            let ratio = ovlp_ratio(primary_qstart, primary_qend, qstart, qend);
+            let ratio = ovlp_ratio(primary_qstart, primary_qend, hit.query_start, hit.query_end);
             hit.is_primary = false;
             hit.is_supplementary = ratio <= 0.5;
         }
     });
 }
 
+#[allow(unused)]
 fn get_query_start_end(hit: &Mapping, query_len: i32) -> (i32, i32) {
     match hit.strand {
         minimap2::Strand::Forward => (hit.query_start, hit.query_end),
