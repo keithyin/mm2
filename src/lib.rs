@@ -136,6 +136,11 @@ pub fn align_worker(
         if oup_params.discard_multi_align_reads && records.len() > 1 {
             continue;
         }
+
+        if records.is_empty() {
+            continue;
+        }
+
         align_res_sender.send(AlignResult { records }).unwrap();
     }
 }
@@ -160,6 +165,7 @@ pub fn align_single_query_to_targets(
             .unwrap()
         {
             if hit.alignment.is_none() {
+                // filter unmapped
                 continue;
             }
 
