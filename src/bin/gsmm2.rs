@@ -313,6 +313,18 @@ fn main() {
     let preset = &args.preset;
     let align_threads = args.threads.clone();
 
+    let time_fmt = time::format_description::parse(
+        "[year]-[month padding:zero]-[day padding:zero]#[hour]:[minute]:[second]",
+    )
+    .unwrap();
+
+    let time_offset =
+        time::UtcOffset::current_local_offset().unwrap_or_else(|_| time::UtcOffset::UTC);
+    let timer = tracing_subscriber::fmt::time::OffsetTime::new(time_offset, time_fmt.clone());
+    tracing_subscriber::fmt::fmt()
+        .with_timer(timer)
+        .init();
+
     match args.commands {
         Commands::Align(ref args) => {
             alignment(preset, align_threads, args);
