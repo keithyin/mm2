@@ -301,7 +301,9 @@ fn alignment(preset: &str, tot_threads: Option<usize>, args: &ReadsToRefAlignArg
             true,
         );
     });
+    tracing::info!("sorting {}", args.io_args.get_oup_path());
     sort_by_coordinates(&args.io_args.get_oup_path(), Some(tot_threads));
+    tracing::info!("indexing {}", args.io_args.get_oup_path());
     samtools_bai(&args.io_args.get_oup_path(), true, Some(tot_threads)).unwrap();
 }
 
