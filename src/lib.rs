@@ -26,7 +26,7 @@ pub struct AlignResult {
     pub records: Vec<BamRecord>,
 }
 
-pub struct NoMemLeakAligner(Aligner<Built>);
+pub struct NoMemLeakAligner(pub Aligner<Built>);
 impl Deref for NoMemLeakAligner {
     type Target = Aligner<Built>;
     fn deref(&self) -> &Self::Target {
@@ -46,6 +46,12 @@ impl Drop for NoMemLeakAligner {
         unsafe {
             mm_idx_destroy(*idx.as_ref());
         }
+    }
+}
+
+impl From<Aligner<Built>> for NoMemLeakAligner {
+    fn from(value: Aligner<Built>) -> Self {
+        Self(value)
     }
 }
 
