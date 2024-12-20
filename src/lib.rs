@@ -1,10 +1,15 @@
 pub mod bam_writer;
 pub mod params;
-use std::{cmp, collections::HashMap, thread};
+use std::{
+    cmp,
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+    thread,
+};
 
 use crossbeam::channel::{Receiver, Sender};
 use gskits::{dna::reverse_complement, ds::ReadInfo, fastx_reader::fasta_reader::FastaFileReader};
-use minimap2::{Aligner, Built, Mapping};
+use minimap2::{ffi::mm_idx_destroy, Aligner, Built, Mapping};
 use params::{
     AlignParams, IndexParams, InputFilterParams, MapParams, OupParams, TOverrideAlignerParam,
 };
@@ -21,6 +26,35 @@ pub struct AlignResult {
     pub records: Vec<BamRecord>,
 }
 
+pub struct NoMemLeakAligner(pub Aligner<Built>);
+impl Deref for NoMemLeakAligner {
+    type Target = Aligner<Built>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for NoMemLeakAligner {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Drop for NoMemLeakAligner {
+    fn drop(&mut self) {
+        let idx = self.idx.take().unwrap();
+        unsafe {
+            mm_idx_destroy(*idx.as_ref());
+        }
+    }
+}
+
+impl From<Aligner<Built>> for NoMemLeakAligner {
+    fn from(value: Aligner<Built>) -> Self {
+        Self(value)
+    }
+}
+
 pub fn build_aligner(
     preset: &str,
     index_args: &IndexParams,
@@ -28,7 +62,7 @@ pub fn build_aligner(
     align_args: &AlignParams,
     oup_args: &OupParams,
     targets: &Vec<ReadInfo>,
-) -> Vec<Aligner<Built>> {
+) -> Vec<NoMemLeakAligner> {
     let aligners = thread::scope(|s| {
         let mut handles = vec![];
         for target in targets {
@@ -63,8 +97,8 @@ pub fn build_aligner(
 
         handles
             .into_iter()
-            .map(|hd| hd.join().unwrap())
-            .collect::<Vec<Aligner<Built>>>()
+            .map(|hd| NoMemLeakAligner(hd.join().unwrap()))
+            .collect::<Vec<_>>()
     });
 
     aligners
@@ -127,7 +161,7 @@ pub fn query_seq_sender(
 pub fn align_worker(
     query_record_recv: Receiver<gskits::ds::ReadInfo>,
     align_res_sender: Sender<AlignResult>,
-    aligners: &Vec<Aligner<Built>>,
+    aligners: &Vec<NoMemLeakAligner>,
     target_idx: &HashMap<String, (usize, usize)>,
     oup_params: &OupParams,
 ) {
@@ -147,7 +181,7 @@ pub fn align_worker(
 
 pub fn align_single_query_to_targets(
     query_record: &gskits::ds::ReadInfo,
-    aligners: &Vec<Aligner<Built>>,
+    aligners: &Vec<NoMemLeakAligner>,
     target_idx: &HashMap<String, (usize, usize)>,
 ) -> Vec<BamRecord> {
     let mut all_hits = vec![];
@@ -472,10 +506,10 @@ fn ovlp_ratio(s1: i32, e1: i32, s2: i32, e2: i32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use gskits::{
-        fastx_reader::read_fastx,
-        gsbam::{bam_header_ext::BamHeaderExt, bam_record_ext::BamRecordExt},
-    };
+    use std::time::{self, Duration};
+
+    use gskits::fastx_reader::read_fastx;
+    use minimap2::ffi::mm_idx_destroy;
     use rust_htslib::bam::ext::BamRecordExtensions;
 
     use super::*;
@@ -536,6 +570,22 @@ mod tests {
         assert_eq!(records[0].is_secondary(), true);
         assert_eq!(records[1].is_secondary(), false);
         assert_eq!(records[2].is_secondary(), true);
+    }
+
+    #[test]
+    fn build_aligner_memory_leak() {
+        for _ in 0..10000 {
+            thread::sleep(Duration::from_millis(1));
+            let aligner = Aligner::builder().map_ont();
+            let aligner = aligner
+            .with_index_threads(1)
+            .with_cigar()
+            .with_sam_out()
+            .with_sam_hit_only()
+            .with_seq_and_id(b"ACGGTAGAGAGGAAGAAGAAGGAATAGCGGACTTGTGTATTTTATCGTCATTCGTGGTTATCATATAGTTTATTGATTTGAAGACTACGTAAGTAATTTGAGGACTGATTAAAATTTTCTTTTTTAGCTTAGAGTCAATTAAAGAGGGCAAAATTTTCTCAAAAGACCATGGTGCATATGACGATAGCTTTAGTAGTATGGATTGGGCTCTTCTTTCATGGATGTTATTCAGAAGGAGTGATATATCGAGGTGTTTGAAACACCAGCGACACCAGAAGGCTGTGGATGTTAAATCGTAGAACCTATAGACGAGTTCTAAAATATACTTTGGGGTTTTCAGCGATGCAAAA",  b"ref")
+            .unwrap();
+            let aligner = NoMemLeakAligner(aligner);
+        }
     }
 
     // #[test]
