@@ -1,6 +1,6 @@
 [package]
 name = "mm2"
-version = "0.14.1"
+version = "0.15.0"
 edition = "2021"
 description = "minimap2 frontend"
 license = "MIT"
@@ -11,7 +11,7 @@ exclude = [
 
 [dependencies]
 clap = {version="4.4", features=["derive"]}
-rust-htslib = "0.47.0"
+rust-htslib = "0.49"
 tracing = "0.1.40"
 tracing-subscriber = {version="0.3.18", features=["json", "env-filter", "fmt", "time", "local-time"]}
 time = "0.3.34"
@@ -25,4 +25,4 @@ uuid = { version = "1.0", features = ["v5"] }
 minimap2="0.1.21"
 num_cpus="1.16"
 crossbeam = "0.8"
-gskits="0.10"
+gskits="0.11"
