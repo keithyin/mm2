@@ -189,13 +189,19 @@ impl OupParams {
     }
 
     pub fn set_discard_secondary(mut self, discard_secondary: bool) -> Self {
-        assert!(self.discard_multi_align_reads == false);
+        if discard_secondary {
+            assert!(self.discard_multi_align_reads == false);
+
+        }
         self.discard_secondary = discard_secondary;
         self
     }
 
     pub fn set_discard_supplementary(mut self, discard_supplementary: bool) -> Self {
-        assert!(self.discard_multi_align_reads == false);
+        if discard_supplementary {
+            assert!(self.discard_multi_align_reads == false);
+
+        }
         self.discard_supplementary = discard_supplementary;
         self
     }
@@ -208,8 +214,11 @@ impl OupParams {
         self
     }
     pub fn set_discard_multi_align_reads(mut self, discard_multi_align_reads: bool) -> Self {
-        assert!(self.discard_secondary == false);
-        assert!(self.discard_supplementary == false);
+        if discard_multi_align_reads {
+            assert!(self.discard_secondary == false);
+            assert!(self.discard_supplementary == false);
+        }
+        
         self.discard_multi_align_reads = discard_multi_align_reads;
         self
     }
