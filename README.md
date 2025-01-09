@@ -23,6 +23,10 @@ gsmm2 align -q query.fa --target target.fa -p query2target
 
 # changelog
 
+## 0.17.0
+
+* set_primary_alignment_according_2_align_score -> set_primary_supp_alignment_according_2_align_score
+
 ## 0.11.0
 
 * np_range & rq_range. 

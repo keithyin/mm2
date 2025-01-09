@@ -210,7 +210,8 @@ pub fn align_single_query_to_targets(
         }
     }
 
-    set_primary_alignment_according_2_align_score(&mut all_hits);
+    // set_primary_alignment_according_2_align_score(&mut all_hits);
+    set_primary_supp_alignment_according_2_align_score(&mut all_hits);
     all_hits
         .iter()
         .map(|hit| build_bam_record_from_mapping(hit, query_record, target_idx))
@@ -288,15 +289,16 @@ pub fn build_bam_record_from_mapping(
     );
     bam_record.set_mtid(-1);
 
-    if !hit.is_primary {
-        bam_record.set_secondary();
-        bam_record.set_supplementary();
-    } else {
+    if hit.is_primary {
         bam_record.unset_secondary();
         bam_record.unset_supplementary();
+    } else {
+        bam_record.set_secondary();
+        bam_record.set_supplementary();
     }
 
     if hit.is_supplementary {
+        bam_record.unset_secondary();
         bam_record.set_supplementary();
     } else {
         bam_record.unset_supplementary();
@@ -425,34 +427,6 @@ pub fn targets_to_targetsidx(targets: &Vec<ReadInfo>) -> HashMap<String, (usize,
     target2idx
 }
 
-/// for multi target scenerio, the primary alignment will be the alignment that has max matched bases
-pub fn set_primary_alignment(records: &mut Vec<BamRecord>) {
-    let mut primary_reocrds = records
-        .iter_mut()
-        .filter(|record| !record.is_secondary())
-        .collect::<Vec<_>>();
-    if primary_reocrds.len() == 1 {
-        return;
-    }
-
-    primary_reocrds.sort_by_key(|record| {
-        let matched = record
-            .cigar()
-            .iter()
-            .map(|cigar| match *cigar {
-                Cigar::Equal(n) | Cigar::Match(n) => n as i64,
-                _ => 0,
-            })
-            .sum::<i64>();
-        -matched
-    });
-
-    primary_reocrds.iter_mut().skip(1).for_each(|record| {
-        record.set_secondary();
-        // record.set_supplementary();
-    });
-}
-
 pub fn set_primary_alignment_according_2_align_score(hits: &mut Vec<Mapping>) {
     if hits.is_empty() {
         return;
@@ -473,6 +447,64 @@ pub fn set_primary_alignment_according_2_align_score(hits: &mut Vec<Mapping>) {
             let ratio = ovlp_ratio(primary_qstart, primary_qend, hit.query_start, hit.query_end);
             hit.is_primary = false;
             hit.is_supplementary = ratio <= 0.5;
+        }
+    });
+}
+
+/// 重新设置 primary 和 supplementary。其主要在 多个参考基因序列场景使用
+/// 由于对于多个参考序列场景，每个参考序列都构建了一个aligner，所以我们会得到之多 N 个 primary。N表示参考序列个数。
+/// primary设置逻辑：primary中，比对分数最高的作为最终的primary, 其余的primary基于 query 的 ovlp 来确定自己是 supplementary 还是 secondary
+/// supplementary设置逻辑：所有hits重新排列，按照 primary 在第一位，supplementary 按照 比对得分位列2~？。secondary排到最后
+///     依次判断 当前 range 和 之前的 supplementary range的 ovlp。如果 ovlp>0.5 当前 supp 就降级为 secondary
+pub fn set_primary_supp_alignment_according_2_align_score(hits: &mut Vec<Mapping>) {
+    if hits.is_empty() {
+        return;
+    }
+    hits.sort_by_key(|v| {
+        -v.alignment.as_ref().unwrap().alignment_score.unwrap()
+            - if v.is_primary { 1_000_000_000 } else { 0 }
+    });
+
+    assert!(hits.first_mut().unwrap().is_primary); // assertion failed
+    assert!(!hits.first_mut().unwrap().is_supplementary);
+
+    let primary_hit = hits.first().unwrap();
+    let (primary_qstart, primary_qend) = (primary_hit.query_start, primary_hit.query_end);
+
+    hits.iter_mut().skip(1).for_each(|hit| {
+        if hit.is_primary {
+            let ratio = ovlp_ratio(primary_qstart, primary_qend, hit.query_start, hit.query_end);
+            hit.is_primary = false;
+            hit.is_supplementary = ratio <= 0.5;
+        }
+    });
+
+    hits.sort_by_key(|v| {
+        -v.alignment.as_ref().unwrap().alignment_score.unwrap()
+            - if v.is_primary {
+                1_000_000_000
+            } else if v.is_supplementary {
+                100_000_000
+            } else {
+                0
+            }
+    });
+
+    let mut visited_ranges = vec![(primary_qstart, primary_qend)];
+    hits.iter_mut().skip(1).for_each(|v| {
+        if v.is_supplementary {
+            let (start, end) = (v.query_start, v.query_end);
+
+            let cnt = visited_ranges
+                .iter()
+                .map(|&(range_s, range_e)| ovlp_ratio(range_s, range_e, start, end))
+                .filter(|&ovlp| ovlp > 0.5)
+                .count();
+            if cnt > 0 {
+                v.is_supplementary = false;
+            } else {
+                visited_ranges.push((start, end));
+            }
         }
     });
 }
@@ -565,11 +597,11 @@ mod tests {
 
         let mut records = vec![r1, r2, r3];
 
-        set_primary_alignment(&mut records);
+        // set_primary_alignment(&mut records);
 
-        assert_eq!(records[0].is_secondary(), true);
-        assert_eq!(records[1].is_secondary(), false);
-        assert_eq!(records[2].is_secondary(), true);
+        // assert_eq!(records[0].is_secondary(), true);
+        // assert_eq!(records[1].is_secondary(), false);
+        // assert_eq!(records[2].is_secondary(), true);
     }
 
     #[test]
@@ -585,6 +617,33 @@ mod tests {
             .with_seq_and_id(b"ACGGTAGAGAGGAAGAAGAAGGAATAGCGGACTTGTGTATTTTATCGTCATTCGTGGTTATCATATAGTTTATTGATTTGAAGACTACGTAAGTAATTTGAGGACTGATTAAAATTTTCTTTTTTAGCTTAGAGTCAATTAAAGAGGGCAAAATTTTCTCAAAAGACCATGGTGCATATGACGATAGCTTTAGTAGTATGGATTGGGCTCTTCTTTCATGGATGTTATTCAGAAGGAGTGATATATCGAGGTGTTTGAAACACCAGCGACACCAGAAGGCTGTGGATGTTAAATCGTAGAACCTATAGACGAGTTCTAAAATATACTTTGGGGTTTTCAGCGATGCAAAA",  b"ref")
             .unwrap();
             let aligner = NoMemLeakAligner(aligner);
+        }
+    }
+
+    #[test]
+    fn test_align_single_query_to_target2() {
+        let ref_file = "/data/ccs_data/MG1655.fa";
+        let fa_iter = FastaFileReader::new(ref_file.to_string());
+        let targets = read_fastx(fa_iter);
+        let mut index_params = IndexParams::default();
+        index_params.kmer = Some(11);
+        index_params.wins = Some(1);
+
+        let aligners = build_aligner(
+            "map-ont",
+            &index_params,
+            &MapParams::default(),
+            &AlignParams::default(),
+            &OupParams::default(),
+            &targets,
+        );
+
+        let seq = b"GAGAGAAGAGATGTTCTACTGGTGTGCCGATGGTGGCGGATTAGTCCTCGCTCAATCTGGGGTCAGGCGGTGATGGTCTATTGCTATCAATTATACAACAATTAAACAACAACCGGCGAAAGTGATGCAACGGCAGACCAACATCACTGCAAGCTTTACGCGAACGAGCCAGACATTGCTGACGACTCTGGCAGTGCATAGATGACAATAAGTTCGACTGGTTACAAAACCCTTGGGGCTTTTAGAGCAACGAGACACGGCAATGTTGCACCGTTTGCTGCATGAATTGAATTGAACAAAAATATCACCAATAAAAAACGCCTTATGTAAATTTTTCAGCTTTTCATTCTGACTGCAACGGGGCATATGTCTCTGTGTAGATTAAAAAAAGAGTGTCTGATGCAGTTCTGAACTGGTTACCTGCCGTGAGTATAATTAATAAAATTTTATTGACTTGGTCACTAAATACTTTAACCAATATAGGCATAGCGCGACAGACAGATAAAATTACAGAGTACACAACCAATCCCATGGAAACGCATTAGCCCACCATTACCCCACCATCACCATTACCAACAGGTAAAAACGGTGCGGGCTGATCGCGCTATCAGGAAACACAGAAAAAGCCCGCACCTGACATGCGGGCTTTTTTTTTTCGACCAAAGGTAATATACGAGGTAACAACCATGCGAGTGTTTGAAGTTCGGCGGGTTACATCAGTGGCAAATGCAGAACGTTTTCTGCGTTGTGCCGATATTCTGGAAAGCAATGCAGCAGGGGCAGGTGGCCACCGTCTCCTCTGACCCCGCCAAAATCACCACACCTGGTGCGATGATTGAAAAACCATTAGCGGCAAGGAGCTTTAAACCCAATATCAAGCGATGCCGAACGTATTTTGCCGAACTTTTGACGGGACTCGCCGCCGCCAGCCGGGTTTCACCGCTGGCCAATTGAAAACTTTCGTTCGATCAGGAATTTGCCCAAATAAAACATGTCCTGCATGGCATTAAGTTTGTTGGGGCAGTGCCCGGATAGCATCAACCTGCGCTGATTTGCCGTGCGAAGAAATGTCGATCAGCCATTATATCTCTC";
+        for hit in aligners[0]
+            .map(seq, false, false, None, None, Some(b"t"))
+            .unwrap()
+        {
+            println!("hit:{:?}", hit);
         }
     }
 
