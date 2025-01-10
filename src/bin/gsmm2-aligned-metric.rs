@@ -380,6 +380,9 @@ pub fn compute_metric(
         .into_iter()
         .filter(|v| v.is_primary || v.is_supplementary)
         .collect::<Vec<_>>();
+    if hits.is_empty() {
+        return Metric::new(query_record.name.clone(), query_record.seq.len(), "".to_string());
+    }
     let target_name = hits[0].target_name.as_ref().unwrap().as_ref().clone();
     let target_seq = targetname2seq.get(&target_name).unwrap();
     let mut metric = Metric::new(
@@ -391,10 +394,6 @@ pub fn compute_metric(
             target_name.clone()
         },
     );
-
-    if hits.is_empty() {
-        return metric;
-    }
 
     hits.into_iter()
         .for_each(|hit| metric.add_align_info(hit.into()));
