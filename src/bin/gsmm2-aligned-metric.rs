@@ -1,0 +1,871 @@
+use std::collections::HashMap;
+use std::fmt::Display;
+use std::ops::{Deref, DerefMut};
+use std::thread;
+
+use crossbeam::channel::{Receiver, Sender};
+use gskits::dna::{reverse_complement, SEQ_NT4_TABLE};
+use gskits::fastx_reader::read_fastx;
+use gskits::gsbam::bam_record_ext::{BamRecord, BamRecordExt};
+use gskits::{
+    fastx_reader::fasta_reader::FastaFileReader,
+    samtools::{samtools_bai, sort_by_coordinates},
+};
+use minimap2::{Mapping, Strand};
+use mm2::params::{AlignParams, IndexParams, InputFilterParams, MapParams, OupParams};
+use mm2::{
+    align_single_query_to_targets, convert_mapping_cigar_to_record_cigar, AlignResult,
+    NoMemLeakAligner,
+};
+use mm2::{
+    align_worker, bam_writer::write_bam_worker, build_aligner, query_seq_sender,
+    targets_to_targetsidx,
+};
+use rust_htslib::bam::ext::BamRecordExtensions;
+
+use std::str::FromStr;
+
+use clap::{self, Args, Parser, Subcommand};
+
+#[derive(Debug, Parser, Clone)]
+#[command(version, about, long_about=None)]
+pub struct Cli {
+    #[arg(long = "threads")]
+    pub threads: Option<usize>,
+
+    #[arg(long="preset", default_value_t=String::from_str("map-ont").unwrap(), 
+        help="read https://lh3.github.io/minimap2/minimap2.html for more details")]
+    pub preset: String,
+
+    #[command(subcommand)]
+    pub commands: Commands,
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum Commands {
+    Index(IndexArgs),
+    Align(ReadsToRefAlignArgs),
+}
+
+#[derive(Debug, Args, Clone, Copy, Default)]
+pub struct IndexArgs {
+    #[arg(long, help = "minimizer kmer")]
+    pub kmer: Option<usize>,
+
+    #[arg(long, help = "minimizer window size")]
+    pub wins: Option<usize>,
+}
+
+impl IndexArgs {
+    fn to_index_params(&self) -> IndexParams {
+        let mut param = IndexParams::new();
+        param = if let Some(kmer) = self.kmer {
+            param.set_kmer(kmer)
+        } else {
+            param
+        };
+
+        param = if let Some(wins) = self.wins {
+            param.set_wins(wins)
+        } else {
+            param
+        };
+
+        param
+    }
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct ReadsToRefAlignArgs {
+    #[command(flatten)]
+    pub io_args: IoArgs,
+
+    #[command(flatten)]
+    pub index_args: IndexArgs,
+
+    #[command(flatten)]
+    pub map_args: MapArgs,
+
+    #[command(flatten)]
+    pub align_args: AlignArgs,
+
+    #[command(flatten)]
+    pub oup_args: OupArgs,
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct IoArgs {
+    #[arg(
+        short = 'q',
+        help = "query file paths, 
+    if multiple query_filepath are provided, 
+    their query_names will be rewriten to ___0, ___1, and so on, 
+    based on the order of the filenames. valid file format bam/fa/fq",
+        required = true
+    )]
+    pub query: Vec<String>,
+
+    /// target.fasta
+    #[arg(long = "target", short = 't', group = "target_group")]
+    pub target: Option<String>,
+    /// mmi file
+    #[arg(long = "indexedTarget", group = "target_group")]
+    pub indexed_target: Option<String>,
+
+    #[arg(
+        short = 'p',
+        help = "output a file named ${p}.bam",
+        required = true,
+        requires = "target_group"
+    )]
+    pub prefix: String,
+
+    #[arg(
+        long = "np-range",
+        help = "1:3,5,7:9 means [[1, 3], [5, 5], [7, 9]]. only valid for bam input that contains np field"
+    )]
+    pub np_range: Option<String>,
+
+    #[arg(
+        long = "rq-range",
+        help = "0.9:1.1 means 0.9<=rq<=1.1. only valid for bam input that contains rq field"
+    )]
+    pub rq_range: Option<String>,
+}
+
+impl IoArgs {
+    pub fn get_oup_path(&self) -> String {
+        format!("{}.bam", self.prefix)
+    }
+
+    pub fn to_input_filter_params(&self) -> InputFilterParams {
+        let mut param = InputFilterParams::new();
+        param = if let Some(ref np_range_str) = self.np_range {
+            param.set_np_range(np_range_str)
+        } else {
+            param
+        };
+
+        param = if let Some(ref rq_range_str) = self.rq_range {
+            param.set_rq_range(rq_range_str)
+        } else {
+            param
+        };
+
+        param
+    }
+}
+
+#[derive(Debug, Args, Clone, Default)]
+pub struct MapArgs {}
+
+impl MapArgs {
+    pub fn to_map_params(&self) -> MapParams {
+        MapParams::default()
+    }
+}
+
+#[derive(Debug, Args, Clone, Default)]
+pub struct AlignArgs {
+    #[arg(short = 'm', help = "matching_score>=0, recommend 2")]
+    matching_score: Option<i32>,
+
+    #[arg(short = 'M', help = "mismatch_penalty >=0, recommend 4")]
+    mismatch_penalty: Option<i32>,
+
+    #[arg(short = 'o', help = "gap_open_penalty >=0, recommend 4,24")]
+    gap_open_penalty: Option<String>,
+
+    #[arg(short = 'e', help = "gap_extension_penalty >=0, recommend 2,1")]
+    gap_extension_penalty: Option<String>,
+}
+
+impl AlignArgs {
+    pub fn to_align_params(&self) -> AlignParams {
+        let mut param = AlignParams::new();
+        param = if let Some(ms) = self.matching_score {
+            param.set_m_score(ms)
+        } else {
+            param
+        };
+
+        param = if let Some(mms) = self.mismatch_penalty {
+            param.set_mm_score(mms)
+        } else {
+            param
+        };
+
+        param = if let Some(ref go) = self.gap_open_penalty {
+            param.set_gap_open_penalty(go.to_string())
+        } else {
+            param
+        };
+
+        param = if let Some(ref ge) = self.gap_extension_penalty {
+            param.set_gap_extension_penalty(ge.to_string())
+        } else {
+            param
+        };
+
+        param
+    }
+}
+
+#[derive(Debug, Args, Clone, Default)]
+pub struct OupArgs {
+    #[arg(long = "noSeco", help = "discard secondary alignment")]
+    pub discard_secondary: bool,
+
+    #[arg(long = "noSupp", help = "discard supplementary alignment")]
+    pub discard_supplementary: bool,
+
+    #[arg(long = "noMar", help = "discard multiple alignment reads")]
+    pub discard_multi_mapping_reads: bool,
+
+    #[arg(long="oupIyT", default_value_t=-1.0, help="remove the record from the result bam file when the identity < identity_threshold")]
+    pub oup_identity_threshold: f32,
+
+    #[arg(long="oupCovT", default_value_t=-1.0, help="remove the record from the result bam file when the coverage < coverage_threshold")]
+    pub oup_coverage_threshold: f32,
+}
+
+impl OupArgs {
+    fn to_oup_params(&self) -> OupParams {
+        let mut param = OupParams::new();
+        param = param
+            .set_discard_secondary(self.discard_secondary)
+            .set_discard_supplementary(self.discard_supplementary)
+            .set_oup_identity_threshold(self.oup_identity_threshold)
+            .set_oup_coverage_threshold(self.oup_coverage_threshold)
+            .set_discard_multi_align_reads(self.discard_multi_mapping_reads);
+        param
+    }
+}
+
+fn alignment(preset: &str, tot_threads: Option<usize>, args: &ReadsToRefAlignArgs) {
+    let tot_threads = tot_threads.unwrap_or(num_cpus::get());
+    assert!(tot_threads >= 10, "at least 10 threads are needed");
+
+    let target_filename = args
+        .io_args
+        .target
+        .as_ref()
+        .expect("target need to be provided");
+
+    let fa_iter = FastaFileReader::new(target_filename.to_string());
+    let targets = read_fastx(fa_iter);
+    let target2idx = targets_to_targetsidx(&targets);
+
+    let index_params = args.index_args.to_index_params();
+    let map_params = args.map_args.to_map_params();
+    let align_params = args.align_args.to_align_params();
+    let oup_params = args.oup_args.to_oup_params();
+    let inp_filter_params = args.io_args.to_input_filter_params();
+
+    let aligners = build_aligner(
+        preset,
+        &index_params,
+        &map_params,
+        &align_params,
+        &oup_params,
+        &targets,
+    );
+
+    /*
+    1. query_seq_sender
+    2. align
+    3. write to bam
+    */
+    thread::scope(|s| {
+        let aligners = &aligners;
+        let target2idx = &target2idx;
+        let inp_filter_params = &inp_filter_params;
+        let (qs_sender, qs_recv) = crossbeam::channel::bounded(1000);
+        s.spawn(move || {
+            query_seq_sender(&args.io_args.query, qs_sender, inp_filter_params);
+        });
+
+        let align_threads = tot_threads - 8;
+        let (align_res_sender, align_res_recv) = crossbeam::channel::bounded(1000);
+        for _ in 0..align_threads {
+            let qs_recv_ = qs_recv.clone();
+            let align_res_sender_ = align_res_sender.clone();
+            s.spawn(move || {
+                align_worker(
+                    qs_recv_,
+                    align_res_sender_,
+                    aligners,
+                    target2idx,
+                    &oup_params,
+                )
+            });
+        }
+        drop(qs_recv);
+        drop(align_res_sender);
+
+        write_bam_worker(
+            align_res_recv,
+            target2idx,
+            &args.io_args.get_oup_path(),
+            &oup_params,
+            "gsmm2",
+            env!("CARGO_PKG_VERSION"),
+            true,
+        );
+    });
+    tracing::info!("sorting {}", args.io_args.get_oup_path());
+    sort_by_coordinates(&args.io_args.get_oup_path(), Some(tot_threads));
+    tracing::info!("indexing {}", args.io_args.get_oup_path());
+    samtools_bai(&args.io_args.get_oup_path(), true, Some(tot_threads)).unwrap();
+}
+
+fn main() {
+    let args = Cli::parse();
+
+    let preset = &args.preset;
+    let align_threads = args.threads.clone();
+
+    let time_fmt = time::format_description::parse(
+        "[year]-[month padding:zero]-[day padding:zero]#[hour]:[minute]:[second]",
+    )
+    .unwrap();
+
+    let time_offset =
+        time::UtcOffset::current_local_offset().unwrap_or_else(|_| time::UtcOffset::UTC);
+    let timer = tracing_subscriber::fmt::time::OffsetTime::new(time_offset, time_fmt.clone());
+    tracing_subscriber::fmt::fmt().with_timer(timer).init();
+
+    match args.commands {
+        Commands::Align(ref args) => {
+            alignment(preset, align_threads, args);
+        }
+        _ => panic!("not implemented yet"),
+    }
+}
+
+pub fn metric_worker(
+    query_record_recv: Receiver<gskits::ds::ReadInfo>,
+    metric_sender: Sender<Metric>,
+    aligners: &Vec<NoMemLeakAligner>,
+    targetname2seq: &HashMap<String, String>,
+    oup_params: &OupParams,
+) {
+    for query_record in query_record_recv {
+        let metric = compute_metric(&query_record, aligners, targetname2seq, oup_params);
+        metric_sender.send(metric).unwrap();
+    }
+}
+
+pub fn compute_metric(
+    query_record: &gskits::ds::ReadInfo,
+    aligners: &Vec<NoMemLeakAligner>,
+    targetname2seq: &HashMap<String, String>,
+    oup_params: &OupParams,
+) -> Metric {
+    let hits = align_single_query_to_targets(&query_record, aligners);
+    let hits = hits
+        .into_iter()
+        .filter(|v| v.is_primary || v.is_supplementary)
+        .collect::<Vec<_>>();
+    let target_name = hits[0].target_name.as_ref().unwrap().as_ref().clone();
+    let target_seq = targetname2seq.get(&target_name).unwrap();
+    let mut metric = Metric::new(
+        query_record.name.clone(),
+        query_record.seq.len(),
+        if hits.is_empty() {
+            "".to_string()
+        } else {
+            target_name.clone()
+        },
+    );
+
+    if hits.is_empty() {
+        return metric;
+    }
+
+    hits.into_iter()
+        .for_each(|hit| metric.add_align_info(hit.into()));
+
+    metric.compute_metric(target_seq, &query_record.seq);
+
+    metric
+}
+
+#[derive(Debug)]
+struct Metric {
+    qname: String,
+    rname: String,
+    qlen: usize,
+    align_infos: SingleQueryAlignInfo,
+
+    matched_cnt: [usize; 4],
+    mismatched_cnt: [usize; 4],
+    homodel_cnt: [usize; 4],
+    non_homodel_cnt: [usize; 4],
+    homoins_cnt: [usize; 4],
+    non_homoins_cnt: [usize; 4],
+}
+impl Metric {
+    pub fn new(qname: String, qlen: usize, rname: String) -> Self {
+        Self {
+            qname,
+            rname,
+            qlen,
+            align_infos: SingleQueryAlignInfo(vec![]),
+            matched_cnt: [0; 4],
+            mismatched_cnt: [0; 4],
+            homodel_cnt: [0; 4],
+            non_homodel_cnt: [0; 4],
+            homoins_cnt: [0; 4],
+            non_homoins_cnt: [0; 4],
+        }
+    }
+
+    pub fn add_align_info(&mut self, align_info: AlignInfo) {
+        self.align_infos.push(align_info);
+    }
+
+    pub fn compute_metric(&mut self, target_seq: &str, query_seq: &str) {
+        let mut tseq_and_records = self
+            .align_infos
+            .iter()
+            .map(|v| v.fwd_record(target_seq, query_seq))
+            .collect::<Vec<_>>();
+
+        tseq_and_records.sort_by_key(|v| v.ori_qstart);
+        let qstart_ends = tseq_and_records
+            .iter()
+            .map(|v| (v.ori_qstart, v.ori_qend))
+            .collect::<Vec<(usize, usize)>>();
+        let mut truncated_qstarts_ends = vec![qstart_ends[0].clone()];
+        let mut ovlp_len = 0;
+        qstart_ends
+            .iter()
+            .skip(1)
+            .for_each(|&(mut cur_start, cur_end)| {
+                let (pre_start, pre_end) = truncated_qstarts_ends.last_mut().unwrap();
+                if cur_start >= *pre_end {
+                    truncated_qstarts_ends.push((cur_start, cur_end));
+                } else {
+                    ovlp_len += *pre_end - cur_start;
+
+                    if (cur_end - cur_start) > (*pre_end - *pre_start) {
+                        *pre_end = cur_start;
+                    } else {
+                        cur_start = *pre_end;
+                    }
+
+                    truncated_qstarts_ends.push((cur_start, cur_end));
+                }
+            });
+
+        let coverlen = truncated_qstarts_ends
+            .iter()
+            .map(|&(s, e)| e - s)
+            .sum::<usize>();
+
+        tseq_and_records
+            .iter()
+            .zip(truncated_qstarts_ends.iter())
+            .for_each(|(info, se)| {
+                let align_pair = info.alignment_pair(Some(se.0), Some(se.1));
+
+                fill_align_info_from_align_pair(
+                    align_pair.0.as_bytes(),
+                    align_pair.1.as_bytes(),
+                    self,
+                );
+            });
+
+        let cov2 = self.matched_cnt.iter().copied().sum::<usize>()
+            + self.mismatched_cnt.iter().copied().sum::<usize>()
+            + self.homoins_cnt.iter().copied().sum::<usize>()
+            + self.non_homoins_cnt.iter().copied().sum::<usize>();
+        assert_eq!(cov2, coverlen);
+
+        // tseq_and_records
+        //     .iter()
+        //     .for_each(|v| println!("{}", v.alignment_str(None, None)));
+    }
+}
+
+#[derive(Debug)]
+pub struct AlignInfo {
+    rstart: usize,
+    rend: usize,
+    qstart: usize,
+    qend: usize,
+    fwd: bool,
+    cigar: Vec<(u32, u8)>,
+}
+
+impl Display for AlignInfo {
+    /// 1:1000->1000:2000+ means query span 1~1000 forward aligned to ref span 1000:2000
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}->{}:{}{}",
+            self.qstart,
+            self.qend,
+            self.rstart,
+            self.rend,
+            if self.fwd { "+" } else { "-" }
+        )
+    }
+}
+
+impl AlignInfo {
+    pub fn fwd_record(&self, target_seq: &str, query_seq: &str) -> TseqAndRecord {
+        let aligned_target_seq = if self.fwd {
+            target_seq[self.rstart..self.rend].to_string()
+        } else {
+            reverse_complement(&target_seq[self.rstart..self.rend])
+        };
+
+        let query_seq = query_seq[self.qstart..self.qend].to_string();
+        let mut record = BamRecord::new();
+
+        let mapping_cigar = if self.fwd {
+            self.cigar.clone()
+        } else {
+            self.cigar.iter().rev().copied().collect::<Vec<_>>()
+        };
+
+        let cigar_str = convert_mapping_cigar_to_record_cigar(
+            &mapping_cigar,
+            0,
+            query_seq.len(),
+            query_seq.len(),
+            false,
+        );
+        record.set_pos(0);
+
+        record.set(
+            b"-",
+            Some(&cigar_str),
+            query_seq.as_bytes(),
+            &vec![255; query_seq.len()],
+        );
+        let (ori_rstart, ori_rend) = if self.fwd {
+            (self.rstart, self.rend)
+        } else {
+            (self.rend, self.rstart)
+        };
+        TseqAndRecord::new(
+            ori_rstart,
+            ori_rend,
+            self.qstart,
+            self.qend,
+            aligned_target_seq,
+            record,
+        )
+    }
+}
+
+impl From<Mapping> for AlignInfo {
+    fn from(value: Mapping) -> Self {
+        let aln = value.alignment.unwrap();
+        let fwd = match value.strand {
+            Strand::Forward => true,
+            Strand::Reverse => false,
+        };
+        Self {
+            rstart: value.target_start as usize,
+            rend: value.target_end as usize,
+            qstart: value.query_start as usize,
+            qend: value.query_end as usize,
+            fwd: fwd,
+            cigar: aln.cigar.unwrap(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct SingleQueryAlignInfo(Vec<AlignInfo>);
+impl Deref for SingleQueryAlignInfo {
+    type Target = Vec<AlignInfo>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl DerefMut for SingleQueryAlignInfo {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+pub struct TseqAndRecord {
+    ori_rstart: usize,
+    ori_rend: usize,
+    ori_qstart: usize,
+    ori_qend: usize,
+    tseq: String,
+    record: BamRecord,
+}
+impl TseqAndRecord {
+    pub fn new(
+        ori_rstart: usize,
+        ori_rend: usize,
+        ori_qstart: usize,
+        ori_qend: usize,
+        tseq: String,
+        record: BamRecord,
+    ) -> Self {
+        Self {
+            ori_rstart,
+            ori_rend,
+            ori_qstart,
+            ori_qend,
+            tseq,
+            record,
+        }
+    }
+
+    pub fn alignment_pair(&self, qstart: Option<usize>, qend: Option<usize>) -> (String, String) {
+        let record_ext = BamRecordExt::new(&self.record);
+        let rstart = record_ext.reference_start() as i64;
+        let rend = record_ext.reference_end() as i64;
+        let qstart = qstart.unwrap_or(record_ext.query_alignment_start()) as i64;
+        let qend = qend.unwrap_or(record_ext.query_alignment_end()) as i64;
+
+        let mut r_cursor = None;
+        let mut q_cursor = None;
+        let qseq = record_ext.get_seq();
+        let qseq = qseq.as_bytes();
+        let rseq = self.tseq.as_bytes();
+
+        let mut aligned_ref = String::new();
+        let mut aligned_qry = String::new();
+        for [qpos, rpos] in self.record.aligned_pairs_full() {
+            if rpos.is_some() {
+                r_cursor = rpos;
+            }
+            if qpos.is_some() {
+                q_cursor = qpos;
+            }
+
+            if r_cursor.unwrap_or(0) >= rend || q_cursor.unwrap_or(0) >= qend {
+                break;
+            }
+
+            if r_cursor.unwrap_or(0) >= rstart && q_cursor.unwrap_or(0) >= qstart {
+                if let Some(qpos_) = qpos.map(|v| v as usize) {
+                    aligned_qry.push(qseq[qpos_] as char);
+                } else {
+                    aligned_qry.push('-');
+                }
+
+                if let Some(rpos_) = rpos.map(|v| v as usize) {
+                    aligned_ref.push(rseq[rpos_] as char);
+                } else {
+                    aligned_ref.push('-');
+                }
+            }
+        }
+
+        (aligned_ref, aligned_qry)
+    }
+
+    pub fn alignment_str(&self, qstart: Option<usize>, qend: Option<usize>) -> String {
+        let (aligned_ref, aligned_qry) = self.alignment_pair(qstart, qend);
+
+        let mut oup = String::new();
+        oup.push_str(&format!(
+            "ref:{}-{}\nqry:{}-{}\n",
+            self.ori_rstart, self.ori_rend, self.ori_qstart, self.ori_qend
+        ));
+        let stepsize = 50;
+        let numstep = (aligned_ref.len() - 1 + stepsize) / stepsize;
+        (0..numstep).into_iter().for_each(|idx| {
+            let start_pos = idx * stepsize;
+            let end_pos = (start_pos + stepsize).min(aligned_ref.len());
+            oup.push_str(&format!("ref:{}\n", &aligned_ref[start_pos..end_pos]));
+            oup.push_str(&format!("qry:{}\n", &aligned_qry[start_pos..end_pos]));
+            oup.push_str("\n");
+        });
+        oup
+    }
+}
+
+pub fn fill_align_info_from_align_pair(
+    aligned_ref: &[u8],
+    aligned_qry: &[u8],
+    metric: &mut Metric,
+) {
+    assert_eq!(aligned_ref.len(), aligned_qry.len());
+
+    let mut ins_bases_idx = vec![];
+    let mut del_bases_idx = vec![];
+
+    for idx in 0..aligned_qry.len() {
+        let qbase = aligned_qry[idx];
+        let rbase = aligned_ref[idx];
+
+        match (qbase as char, rbase as char) {
+            ('-', '-') => {
+                panic!("")
+            }
+
+            ('-', _rbase) => {
+                // deletion
+                del_bases_idx.push(idx);
+            }
+            (_qbase, '-') => {
+                // insertion
+                ins_bases_idx.push(idx);
+            }
+
+            (qbase, rbase) => {
+                if rbase == qbase {
+                    metric.matched_cnt[SEQ_NT4_TABLE[qbase as usize] as usize] += 1;
+                } else {
+                    metric.mismatched_cnt[SEQ_NT4_TABLE[qbase as usize] as usize] += 1;
+                }
+
+                if !del_bases_idx.is_empty() {
+                    let pre = get_pre_rbase(aligned_ref, del_bases_idx.first().copied().unwrap());
+                    let next = get_next_rbase(aligned_ref, del_bases_idx.last().copied().unwrap());
+
+                    let mut homo = false;
+                    let del_bases = del_bases_idx
+                        .iter()
+                        .map(|&idx| aligned_ref[idx])
+                        .collect::<Vec<_>>();
+                    if let Some(pre) = pre {
+                        homo |= del_bases.iter().filter(|&&b| b == pre).count() == del_bases.len();
+                    }
+                    if let Some(next) = next {
+                        homo |= del_bases.iter().filter(|&&b| b == next).count() == del_bases.len();
+                    }
+                    if homo {
+                        del_bases.iter().for_each(|&v| {
+                            metric.homodel_cnt[SEQ_NT4_TABLE[v as usize] as usize] += 1
+                        });
+                    } else {
+                        del_bases.iter().for_each(|&v| {
+                            metric.non_homodel_cnt[SEQ_NT4_TABLE[v as usize] as usize] += 1
+                        });
+                    }
+                }
+
+                if !ins_bases_idx.is_empty() {
+                    let pre = get_pre_rbase(aligned_ref, ins_bases_idx.first().copied().unwrap());
+                    let next = get_next_rbase(aligned_ref, ins_bases_idx.last().copied().unwrap());
+                    let mut homo = false;
+                    let ins_bases = ins_bases_idx
+                        .iter()
+                        .map(|&idx| aligned_qry[idx])
+                        .collect::<Vec<_>>();
+                    if let Some(pre) = pre {
+                        homo |= ins_bases.iter().filter(|&&b| b == pre).count() == ins_bases.len();
+                    }
+                    if let Some(next) = next {
+                        homo |= ins_bases.iter().filter(|&&b| b == next).count() == ins_bases.len();
+                    }
+                    if homo {
+                        ins_bases.iter().for_each(|&v| {
+                            metric.homoins_cnt[SEQ_NT4_TABLE[v as usize] as usize] += 1
+                        });
+                    } else {
+                        ins_bases.iter().for_each(|&v| {
+                            metric.non_homoins_cnt[SEQ_NT4_TABLE[v as usize] as usize] += 1
+                        });
+                    }
+                }
+
+                del_bases_idx.clear();
+                ins_bases_idx.clear();
+            }
+        }
+    }
+}
+
+pub fn get_next_rbase(aligned_ref: &[u8], idx: usize) -> Option<u8> {
+    let gap = '-' as u8;
+
+    let mut idx_cursor_for_next = idx;
+
+    let next = loop {
+        if (idx_cursor_for_next + 1) >= aligned_ref.len() {
+            break None;
+        }
+
+        idx_cursor_for_next += 1;
+        if aligned_ref[idx_cursor_for_next] != gap {
+            break Some(aligned_ref[idx_cursor_for_next]);
+        }
+    };
+    next
+}
+
+pub fn get_pre_rbase(aligned_ref: &[u8], idx: usize) -> Option<u8> {
+    let gap = '-' as u8;
+    let mut idx_cursor_for_pre = idx;
+
+    let pre = loop {
+        if idx_cursor_for_pre == 0 {
+            break None;
+        }
+        idx_cursor_for_pre -= 1;
+
+        if aligned_ref[idx_cursor_for_pre] != gap {
+            break Some(aligned_ref[idx_cursor_for_pre]);
+        }
+    };
+    pre
+}
+
+#[cfg(test)]
+mod test {
+    use std::collections::HashMap;
+
+    use gskits::{
+        ds::ReadInfo,
+        fastx_reader::{fasta_reader::FastaFileReader, read_fastx},
+    };
+    use mm2::{
+        build_aligner,
+        params::{AlignParams, IndexParams, MapParams, OupParams},
+    };
+
+    use crate::compute_metric;
+
+    #[test]
+    fn test_compute_metric() {
+        let ref_file = "/data/ccs_data/MG1655.fa";
+        let fa_iter = FastaFileReader::new(ref_file.to_string());
+        let targets = read_fastx(fa_iter);
+
+        let targetname2seq = targets
+            .iter()
+            .map(|v| (v.name.clone(), v.seq.clone()))
+            .collect::<HashMap<String, String>>();
+
+        let mut index_params = IndexParams::default();
+        index_params.kmer = Some(11);
+        index_params.wins = Some(1);
+
+        let aligners = build_aligner(
+            "map-ont",
+            &index_params,
+            &MapParams::default(),
+            &AlignParams::default(),
+            &OupParams::default(),
+            &targets,
+        );
+
+        //fwd
+        let seq = b"GAGAGAAGAGATGTTCTACTGGTGTGCCGATGGTGGCGGATTAGTCCTCGCTCAATCTGGGGTCAGGCGGTGATGGTCTATTGCTATCAATTATACAACAATTAAACAACAACCGGCGAAAGTGATGCAACGGCAGACCAACATCACTGCAAGCTTTACGCGAACGAGCCAGACATTGCTGACGACTCTGGCAGTGCATAGATGACAATAAGTTCGACTGGTTACAAAACCCTTGGGGCTTTTAGAGCAACGAGACACGGCAATGTTGCACCGTTTGCTGCATGAATTGAATTGAACAAAAATATCACCAATAAAAAACGCCTTATGTAAATTTTTCAGCTTTTCATTCTGACTGCAACGGGGCATATGTCTCTGTGTAGATTAAAAAAAGAGTGTCTGATGCAGTTCTGAACTGGTTACCTGCCGTGAGTATAATTAATAAAATTTTATTGACTTGGTCACTAAATACTTTAACCAATATAGGCATAGCGCGACAGACAGATAAAATTACAGAGTACACAACCAATCCCATGGAAACGCATTAGCCCACCATTACCCCACCATCACCATTACCAACAGGTAAAAACGGTGCGGGCTGATCGCGCTATCAGGAAACACAGAAAAAGCCCGCACCTGACATGCGGGCTTTTTTTTTTCGACCAAAGGTAATATACGAGGTAACAACCATGCGAGTGTTTGAAGTTCGGCGGGTTACATCAGTGGCAAATGCAGAACGTTTTCTGCGTTGTGCCGATATTCTGGAAAGCAATGCAGCAGGGGCAGGTGGCCACCGTCTCCTCTGACCCCGCCAAAATCACCACACCTGGTGCGATGATTGAAAAACCATTAGCGGCAAGGAGCTTTAAACCCAATATCAAGCGATGCCGAACGTATTTTGCCGAACTTTTGACGGGACTCGCCGCCGCCAGCCGGGTTTCACCGCTGGCCAATTGAAAACTTTCGTTCGATCAGGAATTTGCCCAAATAAAACATGTCCTGCATGGCATTAAGTTTGTTGGGGCAGTGCCCGGATAGCATCAACCTGCGCTGATTTGCCGTGCGAAGAAATGTCGATCAGCCATTATATCTCTC";
+
+        // rev
+        let seq = b"TATTCGATTGGAAATGCCCTTGACCAGGTAATTCAGTCTCATCACGAACCATGAGCGTACCTGGTGCTTGAGGATTTCCGGATATATTTTAATCAGGCAAGGGACGATCTGAACTGGCGGATGGGGGTAAATGGTGGCGGGGTTGAAGAACTTTAGCGCGAAGTAGGAAAGCTCCTCGCTTCGTTGCTCTAAAAAAGCCCCCAGGCGTTGTTTGTACCAGTCGACAAGTTTTAAATGTCATCTGCCACGCCAGAGTCGTCAGCAATGTCATGGCTCGTTCGCGTAAAAGCTTTGACAGTTGATGTTGGTCTGCCCGTTGCATCACTTTTCGGCCGGTTGTTGTATTAAGTTGCTAAATTGATAAGCAATAGATCACCGCCTGCCCAGATTGAGCGAAGGTAATCCGCCACCATCGGCAACACAGTAATGACGTCAGCCAGCCAAACGCTAACTCTTCGTTTAGTCAACCCGGAATCCTTCGCGACCCACCCAGCGCGGCATGGCCATCCATGAAAGATTTTTCCTCTAACAGCGCACCAGTTCAACTGGCGTGGCGTAAGTCAATGATATTTCGCCCGACTGCGCGCAGTGGTGGCGACAAGTGAAATCGACATCGTGTAACGATTCA";
+        let query_record =
+            ReadInfo::new_fa_record("tt".to_string(), String::from_utf8(seq.to_vec()).unwrap());
+        compute_metric(
+            &query_record,
+            &aligners,
+            &targetname2seq,
+            &OupParams::default(),
+        );
+    }
+}

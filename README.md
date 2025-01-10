@@ -23,6 +23,11 @@ gsmm2 align -q query.fa --target target.fa -p query2target
 
 # changelog
 
+## 0.18.0
+
+* gsmm2-aligned-metric.rs
+* align_single_query_to_targets TO (align_single_query_to_targets + hits2records)
+
 ## 0.17.0
 
 * set_primary_alignment_according_2_align_score -> set_primary_supp_alignment_according_2_align_score

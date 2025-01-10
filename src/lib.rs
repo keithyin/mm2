@@ -166,7 +166,9 @@ pub fn align_worker(
     oup_params: &OupParams,
 ) {
     for query_record in query_record_recv {
-        let records = align_single_query_to_targets(&query_record, aligners, target_idx);
+        let hits = align_single_query_to_targets(&query_record, aligners);
+        let records = hits2records(&hits, &query_record, target_idx);
+
         if oup_params.discard_multi_align_reads && records.len() > 1 {
             continue;
         }
@@ -182,8 +184,7 @@ pub fn align_worker(
 pub fn align_single_query_to_targets(
     query_record: &gskits::ds::ReadInfo,
     aligners: &Vec<NoMemLeakAligner>,
-    target_idx: &HashMap<String, (usize, usize)>,
-) -> Vec<BamRecord> {
+) -> Vec<Mapping> {
     let mut all_hits = vec![];
 
     for aligner in aligners {
@@ -204,19 +205,27 @@ pub fn align_single_query_to_targets(
             }
 
             all_hits.push(hit);
-
-            // let record = build_bam_record_from_mapping(&hit, query_record, target_idx);
-            // align_records.push(record);
         }
     }
 
     // set_primary_alignment_according_2_align_score(&mut all_hits);
     set_primary_supp_alignment_according_2_align_score(&mut all_hits);
     all_hits
-        .iter()
+    // all_hits
+    //     .iter()
+    //     .map(|hit| build_bam_record_from_mapping(hit, query_record, target_idx))
+    //     .collect()
+    // set_primary_alignment(&mut align_records);
+}
+
+pub fn hits2records(
+    hits: &Vec<Mapping>,
+    query_record: &gskits::ds::ReadInfo,
+    target_idx: &HashMap<String, (usize, usize)>,
+) -> Vec<BamRecord> {
+    hits.iter()
         .map(|hit| build_bam_record_from_mapping(hit, query_record, target_idx))
         .collect()
-    // set_primary_alignment(&mut align_records);
 }
 
 pub fn build_bam_record_from_mapping(
@@ -565,7 +574,8 @@ mod tests {
         let query_filter_iter =
             gskits::fastx_reader::fasta_reader::FastaFileReader::new(query_file.to_string());
         for qr in query_filter_iter {
-            let records = align_single_query_to_targets(&qr, &aligners, &target2idx);
+            let hits = align_single_query_to_targets(&qr, &aligners);
+            let records = hits2records(&hits, &qr, &target2idx);
             for record in records {
                 assert_eq!(record.reference_start(), 720);
                 assert_eq!(record.reference_end(), 1920)
