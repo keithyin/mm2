@@ -23,6 +23,10 @@ gsmm2 align -q query.fa --target target.fa -p query2target
 
 # changelog
 
+## 0.18.1
+
+* primaryCovlen
+
 ## 0.18.0
 
 * gsmm2-aligned-metric.rs

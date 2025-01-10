@@ -342,6 +342,7 @@ pub fn dump_metric_worker(metric_recv: Receiver<Metric>, fname: &str, enable_pb:
         "qlen".to_string(),
         "segs".to_string(),
         "covlen".to_string(),
+        "primaryCovlen".to_string(),
         "queryCoverage".to_string(),
         "identity".to_string(),
         "oriAlignInfo".to_string(),
@@ -367,10 +368,7 @@ pub fn dump_metric_worker(metric_recv: Receiver<Metric>, fname: &str, enable_pb:
 
     let pb = if enable_pb {
         Some(pbar::get_spin_pb(
-            format!(
-                "gsmm2-aligned-metric: writing metric to {}",
-                fname
-            ),
+            format!("gsmm2-aligned-metric: writing metric to {}", fname),
             DEFAULT_INTERVAL,
         ))
     } else {
@@ -392,10 +390,6 @@ pub fn compute_metric(
     oup_params: &OupParams,
 ) -> Metric {
     let hits = align_single_query_to_targets(&query_record, aligners);
-    let hits = hits
-        .into_iter()
-        .filter(|v| v.is_primary || (v.is_supplementary && !oup_params.discard_supplementary))
-        .collect::<Vec<_>>();
 
     if hits.is_empty() || (hits.len() > 0 && oup_params.discard_multi_align_reads) {
         return Metric::new(
@@ -404,6 +398,11 @@ pub fn compute_metric(
             "".to_string(),
         );
     }
+
+    let hits = hits
+        .into_iter()
+        .filter(|v| v.is_primary || (v.is_supplementary && !oup_params.discard_supplementary))
+        .collect::<Vec<_>>();
 
     let target_name = hits[0].target_name.as_ref().unwrap().as_ref().clone();
     let target_seq = targetname2seq.get(&target_name).unwrap();
@@ -442,6 +441,7 @@ pub struct Metric {
     num_segs: usize,
     ovlp: usize,
     covlen: usize,
+    primary_covlen: usize,
     ori_align_info: String,
     merged_qry_span: String,
 }
@@ -461,6 +461,7 @@ impl Metric {
             ovlp: 0,
             num_segs: 0,
             covlen: 0,
+            primary_covlen: 0,
             ori_align_info: "".to_string(),
             merged_qry_span: "".to_string(),
         }
@@ -474,6 +475,12 @@ impl Metric {
         if self.align_infos.is_empty() {
             return;
         }
+
+        self.align_infos.iter().for_each(|v| {
+            if v.primary {
+                self.primary_covlen = v.qend - v.qstart;
+            }
+        });
 
         let mut tseq_and_records = self
             .align_infos
@@ -596,6 +603,7 @@ let mut csv_header = vec![
         "qlen".to_string(),
         "segs".to_string(),
         "covlen".to_string(),
+        "primaryCovlen".to_string(),
         "queryCoverage".to_string(),
         "identity".to_string(),
 
@@ -630,8 +638,12 @@ impl Display for Metric {
         res_str.push_str(&format!("{}\t", self.qlen));
         res_str.push_str(&format!("{}\t", self.num_segs));
         res_str.push_str(&format!("{}\t", self.covlen));
+        res_str.push_str(&format!("{}\t", self.primary_covlen));
         res_str.push_str(&format!("{:.6}\t", self.covlen as f64 / self.qlen as f64));
-        res_str.push_str(&format!("{:.6}\t", self.matched() as f64 / self.aligned_span() as f64));
+        res_str.push_str(&format!(
+            "{:.6}\t",
+            self.matched() as f64 / self.aligned_span() as f64
+        ));
 
         res_str.push_str(&self.ori_align_info);
         res_str.push_str("\t");
@@ -670,6 +682,7 @@ pub struct AlignInfo {
     qstart: usize,
     qend: usize,
     fwd: bool,
+    primary: bool,
     cigar: Vec<(u32, u8)>,
 }
 
@@ -749,6 +762,7 @@ impl From<Mapping> for AlignInfo {
             qstart: value.query_start as usize,
             qend: value.query_end as usize,
             fwd: fwd,
+            primary: value.is_primary,
             cigar: aln.cigar.unwrap(),
         }
     }
