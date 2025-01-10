@@ -368,7 +368,7 @@ pub fn dump_metric_worker(metric_recv: Receiver<Metric>, fname: &str, enable_pb:
     let pb = if enable_pb {
         Some(pbar::get_spin_pb(
             format!(
-                "gsmm2-aligned-metric: writing alignment result to {}",
+                "gsmm2-aligned-metric: writing metric to {}",
                 fname
             ),
             DEFAULT_INTERVAL,
