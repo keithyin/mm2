@@ -26,6 +26,8 @@ gsmm2 align -q query.fa --target target.fa -p query2target
 ## 0.18.1
 
 * primaryCovlen
+* qOvlpRatio
+* rOvlpRatio
 
 ## 0.18.0
 

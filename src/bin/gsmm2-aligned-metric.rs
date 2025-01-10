@@ -346,7 +346,9 @@ pub fn dump_metric_worker(metric_recv: Receiver<Metric>, fname: &str, enable_pb:
         "queryCoverage".to_string(),
         "identity".to_string(),
         "oriAlignInfo".to_string(),
-        "ovlp".to_string(),
+        "qOvlp".to_string(),
+        "qOvlpRatio".to_string(),
+        "rOvlpRatio".to_string(),
         "mergedQrySpan".to_string(),
         "match".to_string(),
         "misMatch".to_string(),
@@ -439,7 +441,9 @@ pub struct Metric {
     non_homoins_cnt: [usize; 4],
 
     num_segs: usize,
-    ovlp: usize,
+    q_ovlp: usize,
+    q_ovlp_ratio: f32,
+    r_ovlp_ratio: f32,
     covlen: usize,
     primary_covlen: usize,
     ori_align_info: String,
@@ -458,7 +462,9 @@ impl Metric {
             non_homodel_cnt: [0; 4],
             homoins_cnt: [0; 4],
             non_homoins_cnt: [0; 4],
-            ovlp: 0,
+            q_ovlp: 0,
+            q_ovlp_ratio: 0.0,
+            r_ovlp_ratio: 0.0,
             num_segs: 0,
             covlen: 0,
             primary_covlen: 0,
@@ -489,10 +495,19 @@ impl Metric {
             .collect::<Vec<_>>();
 
         tseq_and_records.sort_by_key(|v| v.ori_qstart);
+
         let qstart_ends = tseq_and_records
             .iter()
             .map(|v| (v.ori_qstart, v.ori_qend))
             .collect::<Vec<(usize, usize)>>();
+
+        let rstart_ends = tseq_and_records
+            .iter()
+            .map(|v| (v.ori_rstart.min(v.ori_rend), v.ori_rend.max(v.ori_rstart)))
+            .collect::<Vec<(usize, usize)>>();
+
+        self.q_ovlp_ratio = 1.0 - calculate_length_ratio(&qstart_ends) as f32;
+        self.r_ovlp_ratio = 1.0 - calculate_length_ratio(&rstart_ends) as f32;
         let mut truncated_qstarts_ends = vec![qstart_ends[0].clone()];
         let mut ovlp_len = 0;
         qstart_ends
@@ -540,7 +555,7 @@ impl Metric {
 
         assert_eq!(cov2, coverlen);
 
-        self.ovlp = ovlp_len;
+        self.q_ovlp = ovlp_len;
 
         let mut ori_align_info = self
             .align_infos
@@ -608,7 +623,10 @@ let mut csv_header = vec![
         "identity".to_string(),
 
         "oriAlignInfo".to_string(),
-        "ovlp".to_string(),
+        "qOvlp".to_string(),
+        "qOvlpRatio".to_string(),
+        "rOvlpRatio".to_string(),
+
         "mergedQrySpan".to_string(),
         "match".to_string(),
         "misMatch".to_string(),
@@ -648,7 +666,9 @@ impl Display for Metric {
         res_str.push_str(&self.ori_align_info);
         res_str.push_str("\t");
 
-        res_str.push_str(&format!("{}\t", self.ovlp));
+        res_str.push_str(&format!("{}\t", self.q_ovlp));
+        res_str.push_str(&format!("{:.6}\t", self.q_ovlp_ratio));
+        res_str.push_str(&format!("{:.6}\t", self.r_ovlp_ratio));
 
         res_str.push_str(self.merged_qry_span.as_str());
         res_str.push_str("\t");
@@ -1028,6 +1048,57 @@ pub fn get_pre_rbase(aligned_ref: &[u8], idx: usize) -> Option<u8> {
         }
     };
     pre
+}
+
+#[derive(Debug, Clone)]
+struct Region {
+    start: usize,
+    end: usize,
+}
+
+impl Region {
+    fn length(&self) -> usize {
+        self.end - self.start
+    }
+}
+
+fn calculate_length_ratio(regions: &Vec<(usize, usize)>) -> f64 {
+    let mut regions = regions
+        .iter()
+        .map(|v| Region {
+            start: v.0,
+            end: v.1,
+        })
+        .collect::<Vec<_>>();
+    regions.sort_by_key(|v| v.start);
+    // 原始长度的总和
+    let original_length: usize = regions.iter().map(|region| region.length()).sum();
+
+    // 按照 start 排序，并进行 merge
+    let mut merged_regions: Vec<Region> = Vec::new();
+
+    for region in regions {
+        if let Some(last) = merged_regions.last_mut() {
+            if region.start <= last.end {
+                // 有重叠，进行合并
+                last.end = last.end.max(region.end);
+            } else {
+                merged_regions.push(region);
+            }
+        } else {
+            merged_regions.push(region);
+        }
+    }
+
+    // Merge 后的总长度
+    let merged_length: usize = merged_regions.iter().map(|region| region.length()).sum();
+
+    // 计算比例
+    if original_length == 0 {
+        0.0
+    } else {
+        merged_length as f64 / original_length as f64
+    }
 }
 
 #[cfg(test)]
