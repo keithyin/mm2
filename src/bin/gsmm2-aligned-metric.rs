@@ -20,7 +20,7 @@ use rust_htslib::bam::ext::BamRecordExtensions;
 
 use std::str::FromStr;
 
-use clap::{self, Args, Parser, Subcommand};
+use clap::{self, Args, Parser};
 
 #[derive(Debug, Parser, Clone)]
 #[command(version, about, long_about=None)]
@@ -80,6 +80,20 @@ pub struct MetricArgs {
 
     #[command(flatten)]
     pub oup_args: OupArgs,
+}
+
+impl MetricArgs {
+    pub fn get_oup_file(&self) -> String {
+        if self.oup_args.discard_supplementary {
+            return format!("{}/metric_noSupp.csv", self.io_args.get_oup_dir());
+        }
+
+        if self.oup_args.discard_multi_mapping_reads {
+            return format!("{}/metric_noMar.csv", self.io_args.get_oup_dir());
+        }
+
+        format!("{}/metric.csv", self.io_args.get_oup_dir())
+    }
 }
 
 #[derive(Debug, Args, Clone)]
@@ -202,30 +216,27 @@ impl AlignArgs {
 
 #[derive(Debug, Args, Clone, Default)]
 pub struct OupArgs {
-    #[arg(long = "noSeco", help = "discard secondary alignment")]
-    pub discard_secondary: bool,
-
-    #[arg(long = "noSupp", help = "discard supplementary alignment")]
+    #[arg(
+        long = "noSupp",
+        help = "discard supplementary alignment, only keep the primary alignemnt for metric"
+    )]
     pub discard_supplementary: bool,
 
-    #[arg(long = "noMar", help = "discard multiple alignment reads")]
+    #[arg(
+        long = "noMar",
+        help = "discard multi-mapping reads, only keep the unique mapping reads for metric"
+    )]
     pub discard_multi_mapping_reads: bool,
-
-    #[arg(long="oupIyT", default_value_t=-1.0, help="remove the record from the result bam file when the identity < identity_threshold")]
-    pub oup_identity_threshold: f32,
-
-    #[arg(long="oupCovT", default_value_t=-1.0, help="remove the record from the result bam file when the coverage < coverage_threshold")]
-    pub oup_coverage_threshold: f32,
 }
 
 impl OupArgs {
     fn to_oup_params(&self) -> OupParams {
         let mut param = OupParams::new();
         param = param
-            .set_discard_secondary(self.discard_secondary)
+            .set_discard_secondary(true)
             .set_discard_supplementary(self.discard_supplementary)
-            .set_oup_identity_threshold(self.oup_identity_threshold)
-            .set_oup_coverage_threshold(self.oup_coverage_threshold)
+            .set_oup_identity_threshold(-1.0)
+            .set_oup_coverage_threshold(-1.0)
             .set_discard_multi_align_reads(self.discard_multi_mapping_reads);
         param
     }
@@ -328,6 +339,10 @@ pub fn dump_metric_worker(metric_recv: Receiver<Metric>, fname: &str, enable_pb:
     let mut csv_header = vec![
         "qname".to_string(),
         "rname".to_string(),
+        "qlen".to_string(),
+        "covlen".to_string(),
+        "queryCoverage".to_string(),
+        "identity".to_string(),
         "oriAlignInfo".to_string(),
         "ovlp".to_string(),
         "mergedQrySpan".to_string(),
@@ -378,11 +393,17 @@ pub fn compute_metric(
     let hits = align_single_query_to_targets(&query_record, aligners);
     let hits = hits
         .into_iter()
-        .filter(|v| v.is_primary || v.is_supplementary)
+        .filter(|v| v.is_primary || (v.is_supplementary && !oup_params.discard_supplementary))
         .collect::<Vec<_>>();
-    if hits.is_empty() {
-        return Metric::new(query_record.name.clone(), query_record.seq.len(), "".to_string());
+
+    if hits.is_empty() || (hits.len() > 0 && oup_params.discard_multi_align_reads) {
+        return Metric::new(
+            query_record.name.clone(),
+            query_record.seq.len(),
+            "".to_string(),
+        );
     }
+
     let target_name = hits[0].target_name.as_ref().unwrap().as_ref().clone();
     let target_seq = targetname2seq.get(&target_name).unwrap();
     let mut metric = Metric::new(
@@ -418,6 +439,7 @@ pub struct Metric {
     non_homoins_cnt: [usize; 4],
 
     ovlp: usize,
+    covlen: usize,
     ori_align_info: String,
     merged_qry_span: String,
 }
@@ -435,6 +457,7 @@ impl Metric {
             homoins_cnt: [0; 4],
             non_homoins_cnt: [0; 4],
             ovlp: 0,
+            covlen: 0,
             ori_align_info: "".to_string(),
             merged_qry_span: "".to_string(),
         }
@@ -486,7 +509,7 @@ impl Metric {
             .iter()
             .map(|&(s, e)| e - s)
             .sum::<usize>();
-
+        self.covlen = coverlen;
         tseq_and_records
             .iter()
             .zip(truncated_qstarts_ends.iter())
@@ -526,6 +549,39 @@ impl Metric {
             .collect::<Vec<_>>()
             .join(";");
     }
+
+    pub fn matched(&self) -> usize {
+        self.matched_cnt.iter().copied().sum::<usize>()
+    }
+
+    pub fn mismatched(&self) -> usize {
+        self.mismatched_cnt.iter().copied().sum::<usize>()
+    }
+
+    pub fn homoins(&self) -> usize {
+        self.homoins_cnt.iter().copied().sum::<usize>()
+    }
+
+    pub fn non_homoins(&self) -> usize {
+        self.non_homoins_cnt.iter().copied().sum::<usize>()
+    }
+
+    pub fn homodel(&self) -> usize {
+        self.homodel_cnt.iter().copied().sum::<usize>()
+    }
+
+    pub fn non_homodel(&self) -> usize {
+        self.non_homodel_cnt.iter().copied().sum::<usize>()
+    }
+
+    pub fn aligned_span(&self) -> usize {
+        self.matched()
+            + self.mismatched()
+            + self.homoins()
+            + self.non_homoins()
+            + self.homodel()
+            + self.non_homodel()
+    }
 }
 
 /*
@@ -533,6 +589,12 @@ impl Metric {
 let mut csv_header = vec![
         "qname".to_string(),
         "rname".to_string(),
+
+        "qlen".to_string(),
+        "covlen".to_string(),
+        "queryCoverage".to_string(),
+        "identity".to_string(),
+
         "oriAlignInfo".to_string(),
         "ovlp".to_string(),
         "mergedQrySpan".to_string(),
@@ -561,6 +623,11 @@ impl Display for Metric {
         res_str.push_str(&self.rname);
         res_str.push_str("\t");
 
+        res_str.push_str(&format!("{}\t", self.qlen));
+        res_str.push_str(&format!("{}\t", self.covlen));
+        res_str.push_str(&format!("{:.6}\t", self.covlen as f64 / self.qlen as f64));
+        res_str.push_str(&format!("{:.6}\t", self.matched() as f64 / self.aligned_span() as f64));
+
         res_str.push_str(&self.ori_align_info);
         res_str.push_str("\t");
 
@@ -569,30 +636,12 @@ impl Display for Metric {
         res_str.push_str(self.merged_qry_span.as_str());
         res_str.push_str("\t");
 
-        res_str.push_str(&format!(
-            "{}\t",
-            self.matched_cnt.iter().copied().sum::<usize>()
-        ));
-        res_str.push_str(&format!(
-            "{}\t",
-            self.mismatched_cnt.iter().copied().sum::<usize>()
-        ));
-        res_str.push_str(&format!(
-            "{}\t",
-            self.non_homoins_cnt.iter().copied().sum::<usize>()
-        ));
-        res_str.push_str(&format!(
-            "{}\t",
-            self.homoins_cnt.iter().copied().sum::<usize>()
-        ));
-        res_str.push_str(&format!(
-            "{}\t",
-            self.non_homodel_cnt.iter().copied().sum::<usize>()
-        ));
-        res_str.push_str(&format!(
-            "{}\t",
-            self.homodel_cnt.iter().copied().sum::<usize>()
-        ));
+        res_str.push_str(&format!("{}\t", self.matched()));
+        res_str.push_str(&format!("{}\t", self.mismatched()));
+        res_str.push_str(&format!("{}\t", self.non_homoins()));
+        res_str.push_str(&format!("{}\t", self.homoins()));
+        res_str.push_str(&format!("{}\t", self.non_homodel()));
+        res_str.push_str(&format!("{}\t", self.homodel()));
 
         for idx in 0..4 {
             res_str.push_str(&format!("{}\t", self.matched_cnt[idx]));
