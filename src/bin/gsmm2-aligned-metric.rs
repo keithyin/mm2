@@ -297,7 +297,7 @@ fn metric_entrance(preset: &str, tot_threads: Option<usize>, args: &MetricArgs) 
         drop(qs_recv);
         drop(metric_sender);
 
-        let oup_filename = format!("{}/metric.csv", args.io_args.get_oup_dir());
+        let oup_filename = args.get_oup_file();
         dump_metric_worker(metric_recv, &oup_filename, true);
     });
 }
