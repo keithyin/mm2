@@ -340,6 +340,7 @@ pub fn dump_metric_worker(metric_recv: Receiver<Metric>, fname: &str, enable_pb:
         "qname".to_string(),
         "rname".to_string(),
         "qlen".to_string(),
+        "segs".to_string(),
         "covlen".to_string(),
         "queryCoverage".to_string(),
         "identity".to_string(),
@@ -438,6 +439,7 @@ pub struct Metric {
     homoins_cnt: [usize; 4],
     non_homoins_cnt: [usize; 4],
 
+    num_segs: usize,
     ovlp: usize,
     covlen: usize,
     ori_align_info: String,
@@ -457,6 +459,7 @@ impl Metric {
             homoins_cnt: [0; 4],
             non_homoins_cnt: [0; 4],
             ovlp: 0,
+            num_segs: 0,
             covlen: 0,
             ori_align_info: "".to_string(),
             merged_qry_span: "".to_string(),
@@ -505,6 +508,7 @@ impl Metric {
                 }
             });
 
+        self.num_segs = truncated_qstarts_ends.len();
         let coverlen = truncated_qstarts_ends
             .iter()
             .map(|&(s, e)| e - s)
@@ -589,8 +593,8 @@ impl Metric {
 let mut csv_header = vec![
         "qname".to_string(),
         "rname".to_string(),
-
         "qlen".to_string(),
+        "segs".to_string(),
         "covlen".to_string(),
         "queryCoverage".to_string(),
         "identity".to_string(),
@@ -624,6 +628,7 @@ impl Display for Metric {
         res_str.push_str("\t");
 
         res_str.push_str(&format!("{}\t", self.qlen));
+        res_str.push_str(&format!("{}\t", self.num_segs));
         res_str.push_str(&format!("{}\t", self.covlen));
         res_str.push_str(&format!("{:.6}\t", self.covlen as f64 / self.qlen as f64));
         res_str.push_str(&format!("{:.6}\t", self.matched() as f64 / self.aligned_span() as f64));
