@@ -78,15 +78,7 @@ pub struct MetricArgs {
 
 impl MetricArgs {
     pub fn get_oup_file(&self) -> String {
-        if self.oup_args.discard_supplementary {
-            return format!("{}/metric_noSupp.csv", self.io_args.get_oup_dir());
-        }
-
-        if self.oup_args.discard_multi_mapping_reads {
-            return format!("{}/metric_noMar.csv", self.io_args.get_oup_dir());
-        }
-
-        format!("{}/metric.csv", self.io_args.get_oup_dir())
+        self.io_args.get_oup_filename()
     }
 }
 
@@ -105,8 +97,8 @@ pub struct IoArgs {
     /// target.fasta
     #[arg(long = "target", short = 't')]
     pub target: String,
-    #[arg(long = "oupdir", help = "oupdir")]
-    pub oupdir: Option<String>,
+    #[arg(long = "out", help = "output filename")]
+    pub outfn: Option<String>,
 
     #[arg(
         long = "np-range",
@@ -122,17 +114,22 @@ pub struct IoArgs {
 }
 
 impl IoArgs {
-    pub fn get_oup_dir(&self) -> String {
-        let oupdir = if let Some(oup) = &self.oupdir {
+    pub fn get_oup_filename(&self) -> String {
+        let out_fn = if let Some(oup) = &self.outfn {
             oup.to_string()
         } else {
-            self.query[0].rsplit_once(".").unwrap().0.to_string()
+            format!(
+                "{}.gsmm2_aligned_metric.csv",
+                self.query[0].rsplit_once(".").unwrap().0
+            )
         };
-
-        if !path::Path::new(&oupdir).exists() {
-            fs::create_dir_all(&oupdir).unwrap()
+        if let Some(dir) = path::Path::new(&out_fn).to_path_buf().parent() {
+            if !dir.exists() {
+                fs::create_dir_all(dir).unwrap();
+            }
         }
-        oupdir
+
+        out_fn
     }
 
     pub fn to_input_filter_params(&self) -> InputFilterParams {
