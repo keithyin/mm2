@@ -10,7 +10,7 @@ use std::{
 
 use crossbeam::channel::{Receiver, Sender};
 use gskits::{dna::reverse_complement, ds::ReadInfo, fastx_reader::fasta_reader::FastaFileReader};
-use minimap2::{ffi::mm_idx_destroy, Aligner, Built, Mapping};
+use minimap2::{Aligner, Built, Mapping};
 use params::{
     AlignParams, IndexParams, InputFilterParams, MapParams, OupParams, TOverrideAlignerParam,
 };

@@ -1,25 +1,16 @@
 use std::collections::HashMap;
-use std::fmt::Display;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
-use std::ops::{Deref, DerefMut};
 use std::{path, thread};
 
-use bio::bio_types::strand::ReqStrand;
 use crossbeam::channel::{Receiver, Sender};
-use gskits::dna::{reverse_complement, SEQ_NT4_TABLE};
-use gskits::ds::region::Regions;
 use gskits::fastx_reader::fasta_reader::FastaFileReader;
 use gskits::fastx_reader::read_fastx;
-use gskits::gsbam::bam_record_ext::{BamRecord, BamRecordExt};
 use gskits::pbar::{self, DEFAULT_INTERVAL};
-use minimap2::{Mapping, Strand};
 use mm2::align_processor::align_metric::{Metric, METRIC_CSV_HEADER};
-use mm2::align_processor::SingleQueryAlignInfo;
 use mm2::params::{AlignParams, IndexParams, InputFilterParams, MapParams, OupParams};
-use mm2::{align_single_query_to_targets, convert_mapping_cigar_to_record_cigar, NoMemLeakAligner};
+use mm2::{align_single_query_to_targets, NoMemLeakAligner};
 use mm2::{build_aligner, query_seq_sender};
-use rust_htslib::bam::ext::BamRecordExtensions;
 
 use std::str::FromStr;
 

@@ -1,14 +1,19 @@
-use std::{fmt::Display, ops::{Deref, DerefMut}};
+use std::{
+    fmt::Display,
+    ops::{Deref, DerefMut},
+};
 
 use bio::bio_types::strand::ReqStrand;
-use gskits::{dna::reverse_complement, gsbam::bam_record_ext::{BamRecord, BamRecordExt}};
+use gskits::{
+    dna::reverse_complement,
+    gsbam::bam_record_ext::{BamRecord, BamRecordExt},
+};
 use minimap2::{Mapping, Strand};
 use rust_htslib::bam::ext::BamRecordExtensions;
 
 use crate::convert_mapping_cigar_to_record_cigar;
 
 pub mod align_metric;
-
 
 pub struct TseqAndRecord {
     pub ori_rstart: usize, // 用来存储 当前比对片段 对应 原始比对区域的 rstart
@@ -206,6 +211,7 @@ impl From<Mapping> for AlignInfo {
     }
 }
 
+/// single query 的比对可能存在多个比对结果。1. 不同片段比对到ref的不同位置。2. 不同片段比对到了ref的相同位置。etc...
 #[derive(Debug)]
 pub struct SingleQueryAlignInfo(pub Vec<AlignInfo>);
 impl Deref for SingleQueryAlignInfo {
