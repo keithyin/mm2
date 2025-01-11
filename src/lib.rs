@@ -1,5 +1,6 @@
 pub mod bam_writer;
 pub mod params;
+pub mod align_processor;
 use std::{
     cmp,
     collections::HashMap,
@@ -42,10 +43,10 @@ impl DerefMut for NoMemLeakAligner {
 
 impl Drop for NoMemLeakAligner {
     fn drop(&mut self) {
-        let idx = self.idx.take().unwrap();
-        unsafe {
-            mm_idx_destroy(*idx.as_ref());
-        }
+        // let idx = self.idx.take().unwrap();
+        // // unsafe {
+        // //     mm_idx_destroy(*idx.as_ref());
+        // // }
     }
 }
 
