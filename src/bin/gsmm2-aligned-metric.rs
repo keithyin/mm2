@@ -413,7 +413,7 @@ mod test {
         params::{AlignParams, IndexParams, MapParams, OupParams},
     };
 
-    use crate::{compute_metric, fill_align_info_from_align_pair, Regions};
+    use crate::compute_metric;
 
     #[test]
     fn test_compute_metric() {
@@ -453,6 +453,4 @@ mod test {
             &OupParams::default(),
         );
     }
-
-
 }
