@@ -346,6 +346,7 @@ pub fn dump_metric_worker(metric_recv: Receiver<Metric>, fname: &str, enable_pb:
         "queryCoverage".to_string(),
         "identity".to_string(),
         "oriAlignInfo".to_string(),
+        "oriQGaps".to_string(),
         "qOvlp".to_string(),
         "qOvlpRatio".to_string(),
         "rOvlpRatio".to_string(),
@@ -447,6 +448,7 @@ pub struct Metric {
     covlen: usize,
     primary_covlen: usize,
     ori_align_info: String,
+    ori_q_gaps: String,
     merged_qry_span: String,
 }
 impl Metric {
@@ -469,6 +471,7 @@ impl Metric {
             covlen: 0,
             primary_covlen: 0,
             ori_align_info: "".to_string(),
+            ori_q_gaps: "".to_string(),
             merged_qry_span: "".to_string(),
         }
     }
@@ -506,8 +509,19 @@ impl Metric {
             .map(|v| (v.ori_rstart.min(v.ori_rend), v.ori_rend.max(v.ori_rstart)))
             .collect::<Vec<(usize, usize)>>();
 
-        self.q_ovlp_ratio = 1.0 - calculate_length_ratio(&qstart_ends) as f32;
-        self.r_ovlp_ratio = 1.0 - calculate_length_ratio(&rstart_ends) as f32;
+        let qstart_ends_region: Regions = (&qstart_ends).into();
+        self.q_ovlp_ratio = qstart_ends_region.ovlp_ratio();
+
+        self.ori_q_gaps = qstart_ends_region
+            .gaps(Some(0), Some(self.qlen))
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let rstart_ends_region: Regions = (&rstart_ends).into();
+        self.r_ovlp_ratio = rstart_ends_region.ovlp_ratio();
+
         let mut truncated_qstarts_ends = vec![qstart_ends[0].clone()];
         let mut ovlp_len = 0;
         qstart_ends
@@ -623,6 +637,7 @@ let mut csv_header = vec![
         "identity".to_string(),
 
         "oriAlignInfo".to_string(),
+        "oriQGaps".to_string(),
         "qOvlp".to_string(),
         "qOvlpRatio".to_string(),
         "rOvlpRatio".to_string(),
@@ -665,6 +680,9 @@ impl Display for Metric {
 
         res_str.push_str(&self.ori_align_info);
         res_str.push_str("\t");
+        res_str.push_str(&self.ori_q_gaps);
+        res_str.push_str("\t");
+
 
         res_str.push_str(&format!("{}\t", self.q_ovlp));
         res_str.push_str(&format!("{:.6}\t", self.q_ovlp_ratio));
@@ -1062,42 +1080,116 @@ impl Region {
     }
 }
 
-fn calculate_length_ratio(regions: &Vec<(usize, usize)>) -> f64 {
-    let mut regions = regions
-        .iter()
-        .map(|v| Region {
-            start: v.0,
-            end: v.1,
-        })
-        .collect::<Vec<_>>();
-    regions.sort_by_key(|v| v.start);
-    // 原始长度的总和
-    let original_length: usize = regions.iter().map(|region| region.length()).sum();
+struct Regions(Vec<Region>);
 
-    // 按照 start 排序，并进行 merge
-    let mut merged_regions: Vec<Region> = Vec::new();
+impl Deref for Regions {
+    type Target = Vec<Region>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
-    for region in regions {
-        if let Some(last) = merged_regions.last_mut() {
-            if region.start <= last.end {
-                // 有重叠，进行合并
-                last.end = last.end.max(region.end);
+impl DerefMut for Regions {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl From<&Vec<(usize, usize)>> for Regions {
+    fn from(value: &Vec<(usize, usize)>) -> Self {
+        let regions = value
+            .iter()
+            .map(|v| Region {
+                start: v.0,
+                end: v.1,
+            })
+            .collect::<Vec<_>>();
+        Self(regions)
+    }
+}
+
+impl Regions {
+    pub fn total_length(&self) -> usize {
+        self.iter().map(|v| v.length()).sum()
+    }
+
+    pub fn merge_regions(&self) -> Self {
+        let mut regions = self.0.clone();
+        regions.sort_by_key(|v| v.start);
+        let mut merged_regions: Vec<Region> = Vec::new();
+
+        for region in regions {
+            if let Some(last) = merged_regions.last_mut() {
+                if region.start <= last.end {
+                    last.end = last.end.max(region.end);
+                } else {
+                    merged_regions.push(region);
+                }
             } else {
                 merged_regions.push(region);
             }
+        }
+        Self(merged_regions)
+    }
+
+    pub fn ovlp_length(&self) -> usize {
+        let mut total_overlap = 0;
+        let mut events = Vec::new();
+
+        for region in &self.0 {
+            events.push((region.start, 1));
+            events.push((region.end, -1));
+        }
+
+        events.sort();
+
+        let mut current_depth = 0;
+        let mut prev_pos = events[0].0;
+
+        for (pos, change) in events {
+            if current_depth > 1 {
+                total_overlap += pos - prev_pos;
+            }
+            current_depth += change;
+            prev_pos = pos;
+        }
+
+        total_overlap
+    }
+
+    pub fn ovlp_ratio(&self) -> f32 {
+        let merged_regions = self.merge_regions();
+        let len_after_merge = merged_regions.total_length();
+        let ovlp_len = self.ovlp_length();
+        if len_after_merge == 0 {
+            0.0
         } else {
-            merged_regions.push(region);
+            ovlp_len as f32 / len_after_merge as f32
         }
     }
 
-    // Merge 后的总长度
-    let merged_length: usize = merged_regions.iter().map(|region| region.length()).sum();
+    /// the region must be sorted for use this function
+    pub fn gaps(&self, init_pos: Option<usize>, end_pos: Option<usize>) -> Vec<i64> {
+        if self.is_empty() {
+            return vec![];
+        }
+        let mut gaps = vec![];
 
-    // 计算比例
-    if original_length == 0 {
-        0.0
-    } else {
-        merged_length as f64 / original_length as f64
+        let mut pre_pos = init_pos;
+        self.iter().for_each(|region| {
+            if let Some(pre_pos) = pre_pos {
+                let gap = region.start as i64 - pre_pos as i64;
+                gaps.push(gap);
+            }
+            pre_pos = Some(region.end);
+        });
+
+        if let Some(end_pos) = end_pos {
+            let gap = end_pos as i64 - pre_pos.unwrap() as i64;
+            gaps.push(gap);
+        }
+
+        gaps
     }
 }
 
@@ -1113,8 +1205,9 @@ mod test {
         build_aligner,
         params::{AlignParams, IndexParams, MapParams, OupParams},
     };
+    use rust_htslib::bcf::synced::pairing::SOME;
 
-    use crate::compute_metric;
+    use crate::{compute_metric, Regions};
 
     #[test]
     fn test_compute_metric() {
@@ -1153,5 +1246,44 @@ mod test {
             &targetname2seq,
             &OupParams::default(),
         );
+    }
+
+    #[test]
+    fn test_calcute_overlap_metrics() {
+        let regions = vec![(1_usize, 5_usize), (1, 5)];
+        let regions: Regions = (&regions).into();
+        let res = regions.ovlp_ratio();
+        println!("{:?}", res);
+
+        let regions = vec![(1_usize, 5_usize), (5, 10)];
+        let regions: Regions = (&regions).into();
+        let res = regions.ovlp_ratio();
+        println!("{:?}", res);
+    }
+
+    #[test]
+    fn test_calcute_gaps() {
+        let regions = vec![(1_usize, 5_usize), (1, 5)];
+        let regions: Regions = (&regions).into();
+        let res = regions.gaps(Some(0), Some(100));
+        println!("{:?}", res);
+
+        let regions = vec![(1_usize, 5_usize), (5, 10)];
+        let regions: Regions = (&regions).into();
+        let res = regions.gaps(Some(0), Some(100));
+
+        println!("{:?}", res);
+
+        let regions = vec![(1_usize, 5_usize), (5, 10)];
+        let regions: Regions = (&regions).into();
+        let res = regions.gaps(None, None);
+
+        println!("{:?}", res);
+
+        let regions = vec![(1_usize, 5_usize), (7, 10)];
+        let regions: Regions = (&regions).into();
+        let res = regions.gaps(None, None);
+
+        println!("{:?}", res);
     }
 }
