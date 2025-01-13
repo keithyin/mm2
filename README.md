@@ -23,6 +23,11 @@ gsmm2 align -q query.fa --target target.fa -p query2target
 
 # changelog
 
+
+## 0.20.0
+
+* homodel logic
+
 ## 0.18.1
 
 * primaryCovlen

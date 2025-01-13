@@ -1,6 +1,6 @@
 [package]
 name = "mm2"
-version = "0.19.0"
+version = "0.20.0"
 edition = "2021"
 description = "minimap2 frontend"
 license = "MIT"

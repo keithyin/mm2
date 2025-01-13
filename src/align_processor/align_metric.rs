@@ -307,7 +307,7 @@ pub fn fill_metric_from_align_pair(aligned_ref: &[u8], aligned_qry: &[u8], metri
             (_qbase, '-') => {
                 // insertion
                 ins_bases_idx.push(idx);
-                fill_deletion_info(&del_bases_idx, aligned_ref, metric);
+                fill_deletion_info_v2(&del_bases_idx, aligned_ref, metric);
                 del_bases_idx.clear();
             }
 
@@ -318,7 +318,7 @@ pub fn fill_metric_from_align_pair(aligned_ref: &[u8], aligned_qry: &[u8], metri
                     metric.mismatched_cnt[SEQ_NT4_TABLE[qbase as usize] as usize] += 1;
                 }
 
-                fill_deletion_info(&del_bases_idx, aligned_ref, metric);
+                fill_deletion_info_v2(&del_bases_idx, aligned_ref, metric);
                 fill_insertion_info(&ins_bases_idx, aligned_ref, aligned_qry, metric);
 
                 del_bases_idx.clear();
@@ -327,7 +327,7 @@ pub fn fill_metric_from_align_pair(aligned_ref: &[u8], aligned_qry: &[u8], metri
         }
     }
 
-    fill_deletion_info(&del_bases_idx, aligned_ref, metric);
+    fill_deletion_info_v2(&del_bases_idx, aligned_ref, metric);
     fill_insertion_info(&ins_bases_idx, aligned_ref, aligned_qry, metric);
 }
 
@@ -336,6 +336,7 @@ pub fn fill_metric_from_align_pair(aligned_ref: &[u8], aligned_qry: &[u8], metri
 /// homo 判定逻辑：1. del区域base需一致，2. del区域的 base 和其 左/右 临近的非 del 区域的base一致
 /// ref:CGGGG  CCCCG  CCG CGG
 /// sbr:C---G  C---G  C-G C-G
+#[allow(unused)]
 pub fn fill_deletion_info(del_bases_idx: &Vec<usize>, aligned_ref: &[u8], metric: &mut Metric) {
     if !del_bases_idx.is_empty() {
         let pre = get_pre_rbase(aligned_ref, del_bases_idx.first().copied().unwrap());
@@ -361,6 +362,37 @@ pub fn fill_deletion_info(del_bases_idx: &Vec<usize>, aligned_ref: &[u8], metric
                 .iter()
                 .for_each(|&v| metric.non_homodel_cnt[SEQ_NT4_TABLE[v as usize] as usize] += 1);
         }
+    }
+}
+
+/// homo 判定逻辑：1. del 位置的 的 ref base 和其 左/右 ref-base 其一一致就是 homo del
+/// ref:CGGGG  CCCCG  CCG CGG CGGAAC
+/// sbr:C---G  C---G  C-G C-G C----C
+#[allow(unused)]
+pub fn fill_deletion_info_v2(del_bases_idx: &Vec<usize>, aligned_ref: &[u8], metric: &mut Metric) {
+    if !del_bases_idx.is_empty() {
+
+        del_bases_idx.iter().for_each(|&base_idx| {
+
+            let pre_ref_base = get_pre_rbase(aligned_ref, base_idx);
+            let next_ref_base = get_next_rbase(aligned_ref, base_idx);
+            let cur_base = aligned_ref[base_idx];
+            let mut homo = false;
+            if let Some(pre_ref_base) = pre_ref_base {
+                homo |= cur_base == pre_ref_base;
+            }
+
+            if let Some(next_ref_base) = next_ref_base {
+                homo |= cur_base == next_ref_base;
+            }
+
+            if homo {
+                metric.homodel_cnt[SEQ_NT4_TABLE[cur_base as usize] as usize] += 1;
+            } else {
+                metric.non_homodel_cnt[SEQ_NT4_TABLE[cur_base as usize] as usize] += 1;
+            }
+
+        });
     }
 }
 
