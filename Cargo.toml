@@ -1,6 +1,6 @@
 [package]
 name = "mm2"
-version = "0.20.0"
+version = "0.20.1"
 edition = "2021"
 description = "minimap2 frontend"
 license = "MIT"
@@ -26,3 +26,6 @@ minimap2="0.1.21"
 num_cpus="1.16"
 crossbeam = "0.8"
 gskits="0.11"
+
+[profile.release]
+debug = true
