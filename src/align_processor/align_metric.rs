@@ -479,4 +479,6 @@ mod test {
         fill_metric_from_align_pair(aligned_ref, aligned_qry, &mut metric);
         println!("{:?}", metric);
     }
+
+    
 }
