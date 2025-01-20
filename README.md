@@ -24,6 +24,17 @@ gsmm2 align -q query.fa --target target.fa -p query2target
 # changelog
 
 
+## 0.20.2
+
+gsmm2-aligned-metric
+
+```rust
+// 1 -> 1000, 0.8 -> 0.2
+aligner.mapopt.best_n = 10000; // Output at most INT secondary alignments
+aligner.mapopt.pri_ratio = 0.2; // Minimal secondary-to-primary score ratio to output secondary mappings
+```
+
+
 ## 0.20.0
 
 * homodel logic
