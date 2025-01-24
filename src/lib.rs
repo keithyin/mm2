@@ -1,6 +1,7 @@
 pub mod align_processor;
 pub mod bam_writer;
 pub mod params;
+pub mod mapping_ext;
 use std::{
     cmp,
     collections::HashMap,
@@ -10,6 +11,7 @@ use std::{
 
 use crossbeam::channel::{Receiver, Sender};
 use gskits::{dna::reverse_complement, ds::ReadInfo, fastx_reader::fasta_reader::FastaFileReader};
+use mapping_ext::MappingExt;
 use minimap2::{Aligner, Built, Mapping};
 use params::{
     AlignParams, IndexParams, InputFilterParams, MapParams, OupParams, TOverrideAlignerParam,
@@ -524,30 +526,6 @@ pub fn set_primary_supp_alignment_according_2_align_score(hits: &mut Vec<Mapping
     });
 }
 
-pub fn mapping_identity(hit: &Mapping) -> f32 {
-    if let Some(aln) = &hit.alignment {
-        let matched = aln
-            .cigar
-            .as_ref()
-            .unwrap()
-            .iter()
-            .filter(|(_, op)| *op == 7)
-            .map(|(cnt, _)| *cnt)
-            .sum::<u32>();
-
-        let tot = aln
-            .cigar
-            .as_ref()
-            .unwrap()
-            .iter()
-            .map(|(cnt, _)| *cnt)
-            .sum::<u32>();
-        matched as f32 / tot as f32
-    } else {
-        0.0
-    }
-}
-
 pub fn mapping2str(hit: &Mapping) -> String {
     format!(
         "qstart:{}, qend:{}, primary:{}, supp:{}, identity:{}, score:{:?}",
@@ -555,7 +533,7 @@ pub fn mapping2str(hit: &Mapping) -> String {
         hit.query_end,
         hit.is_primary,
         hit.is_supplementary,
-        mapping_identity(hit),
+        MappingExt(hit).identity(),
         hit.alignment.as_ref().unwrap().alignment_score
     )
 } 
@@ -725,7 +703,7 @@ mod tests {
                 hit.target_end,
                 hit.is_primary,
                 hit.is_supplementary,
-                mapping_identity(hit),
+                MappingExt(hit).identity(),
                 hit.alignment.as_ref().unwrap().alignment_score
             )
         });
@@ -753,7 +731,7 @@ mod tests {
                 hit.target_end,
                 hit.is_primary,
                 hit.is_supplementary,
-                mapping_identity(hit),
+                MappingExt(hit).identity(),
                 hit.alignment.as_ref().unwrap().alignment_score
             )
         });
@@ -811,7 +789,7 @@ mod tests {
                 hit.target_end,
                 hit.is_primary,
                 hit.is_supplementary,
-                mapping_identity(hit),
+                MappingExt(hit).identity(),
                 hit.alignment.as_ref().unwrap().alignment_score
             )
         });
@@ -837,7 +815,7 @@ mod tests {
         //         hit.query_end,
         //         hit.is_primary,
         //         hit.is_supplementary,
-        //         mapping_identity(hit),
+        //         MappingExt(hit).identity(),
         //         hit.alignment.as_ref().unwrap().alignment_score
         //     )
         // });
@@ -883,7 +861,7 @@ mod tests {
 
     #[test]
     fn test_align_single_query_to_target4() {
-        let ref_file = "/data/ccs_data/MG1655.fa";
+        let ref_file = "test_data/MG1655.fa";
         let fa_iter = FastaFileReader::new(ref_file.to_string());
         let targets = read_fastx(fa_iter);
         let mut index_params = IndexParams::default();
@@ -932,7 +910,7 @@ mod tests {
                 hit.target_end,
                 hit.is_primary,
                 hit.is_supplementary,
-                mapping_identity(hit),
+                MappingExt(hit).identity(),
                 hit.alignment.as_ref().unwrap().alignment_score,
                 hit.strand
             )
@@ -957,16 +935,17 @@ mod tests {
         mapping.sort_by_key(|hit| hit.query_start);
         mapping.iter().for_each(|hit| {
             println!(
-                "qstart:{}, qend:{}, rstart:{}, rend:{}, primary:{}, supp:{}, identity:{}, score:{:?}. strand:{:?}",
+                "qstart:{}, qend:{}, rstart:{}, rend:{}, primary:{}, supp:{}, identity:{}, score:{:?}. strand:{:?}, qlen:{:?}",
                 hit.query_start,
                 hit.query_end,
                 hit.target_start,
                 hit.target_end,
                 hit.is_primary,
                 hit.is_supplementary,
-                mapping_identity(hit),
+                MappingExt(hit).identity(),
                 hit.alignment.as_ref().unwrap().alignment_score,
-                hit.strand
+                hit.strand,
+                hit.query_len
             )
         });
         
