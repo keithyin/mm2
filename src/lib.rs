@@ -652,7 +652,7 @@ mod tests {
 
     #[test]
     fn test_align_single_query_to_target2() {
-        let ref_file = "/data/ccs_data/MG1655.fa";
+        let ref_file = "test_data/MG1655.fa";
         let fa_iter = FastaFileReader::new(ref_file.to_string());
         let targets = read_fastx(fa_iter);
         let mut index_params = IndexParams::default();
@@ -741,7 +741,7 @@ mod tests {
     
     #[test]
     fn test_align_single_query_to_target3() {
-        let ref_file = "/data/ccs_data/MG1655.fa";
+        let ref_file = "test_data/MG1655.fa";
         let fa_iter = FastaFileReader::new(ref_file.to_string());
         let targets = read_fastx(fa_iter);
         let mut index_params = IndexParams::default();

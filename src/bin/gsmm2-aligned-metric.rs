@@ -415,7 +415,7 @@ mod test {
 
     #[test]
     fn test_compute_metric() {
-        let ref_file = "/data/ccs_data/MG1655.fa";
+        let ref_file = "test_data/MG1655.fa";
         let fa_iter = FastaFileReader::new(ref_file.to_string());
         let targets = read_fastx(fa_iter);
 
@@ -455,7 +455,7 @@ mod test {
 
     #[test]
     fn test_compute_metric2() {
-        let ref_file = "/data/ccs_data/MG1655.fa";
+        let ref_file = "test_data/MG1655.fa";
         let fa_iter = FastaFileReader::new(ref_file.to_string());
         let targets = read_fastx(fa_iter);
 
