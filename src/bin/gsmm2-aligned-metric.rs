@@ -259,7 +259,7 @@ fn metric_entrance(preset: &str, tot_threads: Option<usize>, args: &MetricArgs) 
         &align_params,
         &oup_params,
         &targets,
-        tot_threads
+        tot_threads,
     );
     aligners.iter_mut().for_each(|aligner| {
         aligner.mapopt.best_n = 10000;
@@ -436,7 +436,7 @@ mod test {
             &AlignParams::default(),
             &OupParams::default(),
             &targets,
-            10
+            10,
         );
 
         //fwd
@@ -451,7 +451,7 @@ mod test {
             &aligners,
             &targetname2seq,
             &OupParams::default(),
-            false
+            false,
         );
     }
 
@@ -477,7 +477,7 @@ mod test {
             &AlignParams::default(),
             &OupParams::default(),
             &targets,
-            10
+            10,
         );
 
         // // aligner.mapopt.min_cnt = 2;
@@ -499,7 +499,7 @@ mod test {
             &aligners,
             &targetname2seq,
             &OupParams::default(),
-            true
+            true,
         );
     }
 }
