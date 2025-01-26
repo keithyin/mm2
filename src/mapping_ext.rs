@@ -67,6 +67,27 @@ impl<'a> MappingExt<'a> {
         }
     }
 
+    pub fn identity_gap_compressed(&self) -> f32{
+        let matched = self.num_matched();
+        if matched == 0 {
+            0.0
+        } else {
+            let tot = self
+                .0
+                .alignment
+                .as_ref()
+                .unwrap()
+                .cigar
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|&(cnt, op)| if op == 1 || op == 2 {1} else {cnt})
+                .sum::<u32>();
+
+            matched as f32 / tot as f32
+        }
+    }
+
     pub fn query_coverage(&self) -> f32 {
         let qlen = self.0.query_len.unwrap().get();
         let qstart = self.0.query_start;
@@ -137,6 +158,10 @@ mod test {
             assert!((identity1 - 1.0).abs() < 1e-3, "identity1:{}", identity1);
             let identity2 = hit_ext.identity();
             assert!((identity2 - 35.0 / 42.0) < 1e-3, "identity2:{}", identity2);
+
+            let identity3 = hit_ext.identity_gap_compressed();
+            assert!((identity3 - 35.0 / 36.0) < 1e-3, "identity3:{}", identity3);
+
             println!("{:?}", hit);
             break;
         }
@@ -162,6 +187,9 @@ mod test {
             assert!((identity1 - 1.0).abs() < 1e-3, "identity1:{}", identity1);
             let identity2 = hit_ext.identity();
             assert!((identity2 - 26.0 / 35.0) < 1e-3, "identity2:{}", identity2);
+            
+            let identity3 = hit_ext.identity_gap_compressed();
+            assert!((identity3 - 26.0 / 27.0) < 1e-3, "identity3:{}", identity3);
             println!("{:?}", hit);
             break;
         }
