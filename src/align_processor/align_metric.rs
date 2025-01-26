@@ -27,6 +27,8 @@ pub struct Metric {
     ori_align_info: String,
     ori_q_gaps: String,
     merged_qry_span: String,
+
+    long_indels: Vec<i32>,
 }
 impl Metric {
     pub fn new(qname: String, qlen: usize, rname: String) -> Self {
@@ -50,6 +52,7 @@ impl Metric {
             ori_align_info: "".to_string(),
             ori_q_gaps: "".to_string(),
             merged_qry_span: "".to_string(),
+            long_indels: vec![],
         }
     }
 
@@ -220,6 +223,7 @@ lazy_static! {
             "homoIns".to_string(),
             "del".to_string(),
             "homoDel".to_string(),
+            "longIndel".to_string(),
         ];
         for base in ["A", "C", "G", "T"] {
             csv_header.push(format!("match-{}", base));
@@ -269,6 +273,15 @@ impl Display for Metric {
         res_str.push_str(&format!("{}\t", self.homoins()));
         res_str.push_str(&format!("{}\t", self.non_homodel()));
         res_str.push_str(&format!("{}\t", self.homodel()));
+
+        res_str.push_str(&format!(
+            "{}\t",
+            self.long_indels
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
 
         for idx in 0..4 {
             res_str.push_str(&format!("{}\t", self.matched_cnt[idx]));
@@ -331,8 +344,6 @@ pub fn fill_metric_from_align_pair(aligned_ref: &[u8], aligned_qry: &[u8], metri
     fill_insertion_info(&ins_bases_idx, aligned_ref, aligned_qry, metric);
 }
 
-
-
 /// homo 判定逻辑：1. del区域base需一致，2. del区域的 base 和其 左/右 临近的非 del 区域的base一致
 /// ref:CGGGG  CCCCG  CCG CGG
 /// sbr:C---G  C---G  C-G C-G
@@ -370,10 +381,11 @@ pub fn fill_deletion_info(del_bases_idx: &Vec<usize>, aligned_ref: &[u8], metric
 /// sbr:C---G  C---G  C-G C-G C----C
 #[allow(unused)]
 pub fn fill_deletion_info_v2(del_bases_idx: &Vec<usize>, aligned_ref: &[u8], metric: &mut Metric) {
+    if del_bases_idx.len() >= 10 {
+        metric.long_indels.push(-(del_bases_idx.len() as i32));
+    }
     if !del_bases_idx.is_empty() {
-
         del_bases_idx.iter().for_each(|&base_idx| {
-
             let pre_ref_base = get_pre_rbase(aligned_ref, base_idx);
             let next_ref_base = get_next_rbase(aligned_ref, base_idx);
             let cur_base = aligned_ref[base_idx];
@@ -391,11 +403,9 @@ pub fn fill_deletion_info_v2(del_bases_idx: &Vec<usize>, aligned_ref: &[u8], met
             } else {
                 metric.non_homodel_cnt[SEQ_NT4_TABLE[cur_base as usize] as usize] += 1;
             }
-
         });
     }
 }
-
 
 /// homo 判定逻辑：1. ins区域的base必须一致, 2. ins区域的base 和比对区域的上一个或者下一个base相同, 以下情况会被定义为homo
 ///     ref:C---G  C---G  C--G
@@ -406,6 +416,10 @@ pub fn fill_insertion_info(
     aligned_qry: &[u8],
     metric: &mut Metric,
 ) {
+    if ins_bases_idx.len() >= 10 {
+        metric.long_indels.push(ins_bases_idx.len() as i32);
+    }
+
     if !ins_bases_idx.is_empty() {
         let pre = get_pre_rbase(aligned_ref, ins_bases_idx.first().copied().unwrap());
         let next = get_next_rbase(aligned_ref, ins_bases_idx.last().copied().unwrap());
@@ -479,6 +493,4 @@ mod test {
         fill_metric_from_align_pair(aligned_ref, aligned_qry, &mut metric);
         println!("{:?}", metric);
     }
-
-    
 }

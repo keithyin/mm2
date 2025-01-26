@@ -257,6 +257,7 @@ fn alignment(preset: &str, tot_threads: Option<usize>, args: &ReadsToRefAlignArg
         &align_params,
         &oup_params,
         &targets,
+        tot_threads
     );
 
     /*
