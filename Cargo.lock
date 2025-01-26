@@ -1111,7 +1111,7 @@ dependencies = [
 
 [[package]]
 name = "mm2"
-version = "0.20.3"
+version = "0.20.4"
 dependencies = [
  "anyhow",
  "bio 1.6.0",
