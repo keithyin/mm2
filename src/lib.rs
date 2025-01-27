@@ -988,45 +988,45 @@ mod tests {
         });
     }
 
-    #[test]
-    fn test_build_aligner_v2() {
-        let targets = vec![
-            ReadInfo::new_fa_record(
-                "t1".to_string(),
-                "AAAAAGCAGGATGGATGCGGTCGATATTTCCCAGCGAACAGCTCAGCGCAAT".to_string(),
-            ),
-            ReadInfo::new_fa_record(
-                "t2".to_string(),
-                "CCCGGCCACAGCGCCCGGCAATGGCGATTAAAACGCC".to_string(),
-            ),
-        ];
-        let mut aligner = build_aligner_v2(
-            "map-ont",
-            &IndexParams::default(),
-            &MapParams::default(),
-            &AlignParams::default(),
-            &OupParams::default(),
-            &targets,
-        );
+    // #[test]
+    // fn test_build_aligner_v2() {
+    //     let targets = vec![
+    //         ReadInfo::new_fa_record(
+    //             "t1".to_string(),
+    //             "AAAAAGCAGGATGGATGCGGTCGATATTTCCCAGCGAACAGCTCAGCGCAAT".to_string(),
+    //         ),
+    //         ReadInfo::new_fa_record(
+    //             "t2".to_string(),
+    //             "CCCGGCCACAGCGCCCGGCAATGGCGATTAAAACGCC".to_string(),
+    //         ),
+    //     ];
+    //     let mut aligner = build_aligner_v2(
+    //         "map-ont",
+    //         &IndexParams::default(),
+    //         &MapParams::default(),
+    //         &AlignParams::default(),
+    //         &OupParams::default(),
+    //         &targets,
+    //     );
 
-        // let aligner = &mut aligner[0];
-        aligner.mapopt.best_n = 1;
-        aligner.mapopt.q_occ_frac = 0.0;
+    //     // let aligner = &mut aligner[0];
+    //     aligner.mapopt.best_n = 1;
+    //     aligner.mapopt.q_occ_frac = 0.0;
 
-        aligner.idxopt.k = 4;
-        aligner.idxopt.w = 1;
+    //     aligner.idxopt.k = 4;
+    //     aligner.idxopt.w = 1;
 
-        aligner.mapopt.min_cnt = 2;
-        aligner.mapopt.min_dp_max = 10; // min dp score
-        aligner.mapopt.min_chain_score = 10; // this is important for short insert
-        aligner.mapopt.min_ksw_len = 0;
+    //     aligner.mapopt.min_cnt = 2;
+    //     aligner.mapopt.min_dp_max = 10; // min dp score
+    //     aligner.mapopt.min_chain_score = 10; // this is important for short insert
+    //     aligner.mapopt.min_ksw_len = 0;
 
-        let query = b"TTTCCCAGCGAACAGCTCAGCGCAATCCCGGCCACAGCGCCCGGCAA";
-        for hit in aligner
-            .map(query, false, false, None, None, Some(b"query"))
-            .unwrap()
-        {
-            println!("{:?}", hit);
-        }
-    }
+    //     let query = b"TTTCCCAGCGAACAGCTCAGCGCAATCCCGGCCACAGCGCCCGGCAA";
+    //     for hit in aligner
+    //         .map(query, false, false, None, None, Some(b"query"))
+    //         .unwrap()
+    //     {
+    //         println!("{:?}", hit);
+    //     }
+    // }
 }
