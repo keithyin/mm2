@@ -23,6 +23,11 @@ gsmm2 align -q query.fa --target target.fa -p query2target
 
 # changelog
 
+## 0.21.0
+
+gsmm2-aligned-metric
+
+* new field: longIndel. only the abs(indel) >=10 will be recorded. 14,-31 means there are two long indels (ins(14), del(31))
 
 ## 0.20.2
 
