@@ -23,6 +23,10 @@ gsmm2 align -q query.fa --target target.fa -p query2target
 
 # changelog
 
+## 0.22.0
+
+* Pin minimap2 to version 0.1.23
+
 ## 0.21.0
 
 gsmm2-aligned-metric
