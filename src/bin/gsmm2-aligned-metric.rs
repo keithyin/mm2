@@ -270,9 +270,10 @@ fn metric_entrance(preset: &str, tot_threads: Option<usize>, args: &MetricArgs) 
         let aligners = &aligners;
         let targetname2seq = &targetname2seq;
         let inp_filter_params = &inp_filter_params;
+        let oup_params = &oup_params;
         let (qs_sender, qs_recv) = crossbeam::channel::bounded(1000);
         s.spawn(move || {
-            query_seq_sender(&args.io_args.query, qs_sender, inp_filter_params);
+            query_seq_sender(&args.io_args.query, qs_sender, inp_filter_params, oup_params);
         });
 
         let align_threads = tot_threads - 4;
@@ -286,7 +287,7 @@ fn metric_entrance(preset: &str, tot_threads: Option<usize>, args: &MetricArgs) 
                     metric_sender_,
                     aligners,
                     targetname2seq,
-                    &oup_params,
+                    oup_params,
                 )
             });
         }

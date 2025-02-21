@@ -201,20 +201,29 @@ impl AlignArgs {
 
 #[derive(Debug, Args, Clone, Default)]
 pub struct OupArgs {
-    #[arg(long = "noSeco", help = "discard secondary alignment")]
+    /// discard secondary alignment
+    #[arg(long = "noSeco")]
     pub discard_secondary: bool,
 
-    #[arg(long = "noSupp", help = "discard supplementary alignment")]
+    // discard supplementary alignment
+    #[arg(long = "noSupp")]
     pub discard_supplementary: bool,
 
-    #[arg(long = "noMar", help = "discard multiple alignment reads")]
+    /// discard multiple alignment reads
+    #[arg(long = "noMar")]
     pub discard_multi_mapping_reads: bool,
 
-    #[arg(long="oupIyT", default_value_t=-1.0, help="remove the record from the result bam file when the identity < identity_threshold")]
+    /// remove the record from the result bam file when the identity < identity_threshold
+    #[arg(long="oupIyT", default_value_t=-1.0)]
     pub oup_identity_threshold: f32,
 
-    #[arg(long="oupCovT", default_value_t=-1.0, help="remove the record from the result bam file when the coverage < coverage_threshold")]
+    /// remove the record from the result bam file when the coverage < coverage_threshold
+    #[arg(long="oupCovT", default_value_t=-1.0)]
     pub oup_coverage_threshold: f32,
+
+    /// pass through tags. the value will dump to the result bam.
+    #[arg(long = "pt_tags", value_name = "nn,ar")]
+    pub pass_through_tags: Option<String>,
 }
 
 impl OupArgs {
@@ -225,7 +234,8 @@ impl OupArgs {
             .set_discard_supplementary(self.discard_supplementary)
             .set_oup_identity_threshold(self.oup_identity_threshold)
             .set_oup_coverage_threshold(self.oup_coverage_threshold)
-            .set_discard_multi_align_reads(self.discard_multi_mapping_reads);
+            .set_discard_multi_align_reads(self.discard_multi_mapping_reads)
+            .set_pass_through_tags(self.pass_through_tags.as_ref());
         param
     }
 }
@@ -257,7 +267,7 @@ fn alignment(preset: &str, tot_threads: Option<usize>, args: &ReadsToRefAlignArg
         &align_params,
         &oup_params,
         &targets,
-        tot_threads
+        tot_threads,
     );
 
     /*
@@ -269,9 +279,15 @@ fn alignment(preset: &str, tot_threads: Option<usize>, args: &ReadsToRefAlignArg
         let aligners = &aligners;
         let target2idx = &target2idx;
         let inp_filter_params = &inp_filter_params;
+        let oup_params = &oup_params;
         let (qs_sender, qs_recv) = crossbeam::channel::bounded(1000);
         s.spawn(move || {
-            query_seq_sender(&args.io_args.query, qs_sender, inp_filter_params);
+            query_seq_sender(
+                &args.io_args.query,
+                qs_sender,
+                inp_filter_params,
+                oup_params,
+            );
         });
 
         let align_threads = tot_threads - 8;
@@ -285,7 +301,7 @@ fn alignment(preset: &str, tot_threads: Option<usize>, args: &ReadsToRefAlignArg
                     align_res_sender_,
                     aligners,
                     target2idx,
-                    &oup_params,
+                    oup_params,
                 )
             });
         }
@@ -296,7 +312,7 @@ fn alignment(preset: &str, tot_threads: Option<usize>, args: &ReadsToRefAlignArg
             align_res_recv,
             target2idx,
             &args.io_args.get_oup_path(),
-            &oup_params,
+            oup_params,
             "gsmm2",
             env!("CARGO_PKG_VERSION"),
             true,
@@ -322,9 +338,7 @@ fn main() {
     let time_offset =
         time::UtcOffset::current_local_offset().unwrap_or_else(|_| time::UtcOffset::UTC);
     let timer = tracing_subscriber::fmt::time::OffsetTime::new(time_offset, time_fmt.clone());
-    tracing_subscriber::fmt::fmt()
-        .with_timer(timer)
-        .init();
+    tracing_subscriber::fmt::fmt().with_timer(timer).init();
 
     match args.commands {
         Commands::Align(ref args) => {

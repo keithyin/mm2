@@ -23,6 +23,10 @@ gsmm2 align -q query.fa --target target.fa -p query2target
 
 # changelog
 
+## 0.23.0 
+
+* more tags to pass through
+
 ## 0.22.0
 
 * Pin minimap2 to version 0.1.23

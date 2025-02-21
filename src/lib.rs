@@ -168,6 +168,7 @@ pub fn query_seq_sender(
     filenames: &Vec<String>,
     sender: Sender<ReadInfo>,
     input_filter_params: &InputFilterParams,
+    oup_params: &OupParams
 ) {
     let mut file_idx = 0;
     for filename in filenames {
@@ -195,6 +196,7 @@ pub fn query_seq_sender(
                         .send(ReadInfo::from_bam_record(
                             &record,
                             qname_suffix.as_ref().map(|v| v.as_str()),
+                            &oup_params.pass_through_tags
                         ))
                         .unwrap();
                 }
@@ -437,6 +439,19 @@ pub fn build_bam_record_from_mapping(
         }
     }
 
+    if let Some(nn_) = &query_record.nn {
+        if is_rev {
+            let nn_ = nn_.iter().copied().rev().collect::<Vec<_>>();
+            bam_record
+                .push_aux(b"nn", Aux::ArrayU8(AuxArray::from(&nn_)))
+                .unwrap();
+        } else {
+            bam_record
+                .push_aux(b"nn", Aux::ArrayU8(AuxArray::from(nn_)))
+                .unwrap();
+        }
+    }
+
     if let Some(be_) = &query_record.be {
         bam_record
             .push_aux(b"be", Aux::ArrayU32(AuxArray::from(be_)))
@@ -606,6 +621,7 @@ fn ovlp_ratio(s1: i32, e1: i32, s2: i32, e2: i32) -> f32 {
 mod tests {
     use std::time::Duration;
 
+    use bio::alignment::pairwise::Scoring;
     use gskits::fastx_reader::read_fastx;
     use rust_htslib::bam::ext::BamRecordExtensions;
 
@@ -789,7 +805,7 @@ mod tests {
             &AlignParams::default(),
             &OupParams::default(),
             &targets,
-            10
+            10,
         );
 
         let aligner = &mut aligners[0];
@@ -1027,4 +1043,102 @@ mod tests {
     //         println!("{:?}", hit);
     //     }
     // }
+
+    #[test]
+    fn test_align_n() {
+        let seq = b"AANNNNNNNNNNNNNAAAAAAAAANNNNCCCGTTT";
+        let seq = b"AAAAAAAAA";
+        let mut aligner = Aligner::builder()
+            .map_ont()
+            .with_cigar()
+            .with_sam_hit_only()
+            .with_sam_out()
+            .with_seq_and_id(seq, b"ref")
+            .unwrap();
+        aligner.idxopt.k = 3;
+        aligner.idxopt.w = 1;
+        aligner.mapopt.q_occ_frac = 0.;
+        aligner.mapopt.occ_dist = 0;
+
+        aligner.mapopt.min_cnt = 2;
+        aligner.mapopt.min_dp_max = 2; // min dp score
+        aligner.mapopt.min_chain_score = 2; // this is important for short insert
+        aligner.mapopt.min_ksw_len = 0;
+        aligner.mapopt.mid_occ_frac = 0.;
+        aligner.mapopt.min_mid_occ = 0;
+
+        println!("aligner.mapopt:{:?}", aligner.mapopt);
+        println!("--------------------");
+
+        println!("aligner.idxopt:{:?}", aligner.idxopt);
+
+        // b"AACGTCGTCGTCGTAAAAAAAAACGTGCCCGTTT",
+
+        for hit in aligner
+            .map(
+                b"AAAAAAAAA",
+                false,
+                false,
+                None,
+                Some(&[67108864, 68719476736]),
+                Some(b"q"),
+            )
+            .unwrap()
+        {
+            println!("hit:{hit:?}");
+        }
+        println!("hello");
+    }
+
+    #[test]
+    fn test_bio_aign_n() {
+        let scoring = Scoring {
+            gap_open: -2,
+            gap_extend: -1,
+            match_fn: |a: u8, b: u8| {
+                if a == 'N' as u8 {
+                    0
+                } else if a == b {
+                    1i32
+                } else {
+                    -3i32
+                }
+            },
+            match_scores: Some((1, -3)),
+            xclip_prefix: 0,
+            xclip_suffix: 0,
+            yclip_prefix: 0,
+            yclip_suffix: 0,
+        };
+        let x = b"NNNNAAAAAANNNNAAAAAAA";
+        let y = b"ACGTAAAAAAGGACGGAAAAAAA";
+        let mut aligner =
+            bio::alignment::pairwise::Aligner::with_capacity_and_scoring(x.len(), y.len(), scoring);
+        let alignment = aligner.custom(x, y);
+        println!("{}", alignment.pretty(x, y, 80));
+        println!("{alignment:?}");
+    }
+
+    #[test]
+    fn test_bio() {
+        let score = |a: u8, b: u8| if a == b { 2i32 } else { -4i32 };
+        let gap_open = -4;
+        let gap_extension = -2;
+
+        let mut aligner = bio::alignment::pairwise::Aligner::new(gap_open, gap_extension, &score);
+
+        let x = b"ACCGTGGAT";
+        let y = b"AAAAACCGTTGAT";
+        let alignment = aligner.local(x, y);
+        println!("{:?}", alignment);
+        println!("{}", alignment.pretty(x, y, 30));
+
+        let x = b"ACCGTGGAT";
+        let y = b"AAAAACCGTTGAT";
+        let alignment = aligner.semiglobal(x, y);
+        println!("{alignment:?}");
+        println!("{}", alignment.pretty(x, y, 30));
+
+
+    }
 }

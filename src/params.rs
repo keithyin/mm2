@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use gskits::{
     gsbam::bam_record_ext::{BamRecord, BamRecordExt},
     utils::Range,
@@ -13,8 +15,6 @@ pub struct InputFilterParams {
     pub np_range: Option<Range<i32>>,
     pub rq_range: Option<Range<f32>>,
 }
-
-
 
 impl InputFilterParams {
     pub fn new() -> Self {
@@ -32,9 +32,8 @@ impl InputFilterParams {
     }
 
     pub fn valid(&self, record: &BamRecord) -> bool {
-
         let record_ext = BamRecordExt::new(record);
-        
+
         if let Some(np_range_) = &self.np_range {
             if let Some(np) = record_ext.get_np() {
                 if !np_range_.within_range(np as i32) {
@@ -52,7 +51,6 @@ impl InputFilterParams {
         }
 
         true
-
     }
 }
 
@@ -162,13 +160,14 @@ impl TOverrideAlignerParam for IndexParams {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct OupParams {
     pub discard_secondary: bool,
     pub discard_supplementary: bool,
     pub oup_identity_threshold: f32,
     pub oup_coverage_threshold: f32,
     pub discard_multi_align_reads: bool,
+    pub pass_through_tags: HashSet<String>, 
 }
 
 impl Default for OupParams {
@@ -179,6 +178,7 @@ impl Default for OupParams {
             oup_identity_threshold: -1.0,
             oup_coverage_threshold: -1.0,
             discard_multi_align_reads: false,
+            pass_through_tags: HashSet::new(),
         }
     }
 }
@@ -191,7 +191,6 @@ impl OupParams {
     pub fn set_discard_secondary(mut self, discard_secondary: bool) -> Self {
         if discard_secondary {
             assert!(self.discard_multi_align_reads == false);
-
         }
         self.discard_secondary = discard_secondary;
         self
@@ -200,7 +199,6 @@ impl OupParams {
     pub fn set_discard_supplementary(mut self, discard_supplementary: bool) -> Self {
         if discard_supplementary {
             assert!(self.discard_multi_align_reads == false);
-
         }
         self.discard_supplementary = discard_supplementary;
         self
@@ -218,8 +216,19 @@ impl OupParams {
             assert!(self.discard_secondary == false);
             assert!(self.discard_supplementary == false);
         }
-        
+
         self.discard_multi_align_reads = discard_multi_align_reads;
+        self
+    }
+
+    pub fn set_pass_through_tags(mut self, tags: Option<&String>) -> Self {
+        if let Some(tags) = tags {
+            self.pass_through_tags = tags.trim()
+                .split(",")
+                .map(|v| v.to_string())
+                .collect::<HashSet<_>>();
+        }
+
         self
     }
 
