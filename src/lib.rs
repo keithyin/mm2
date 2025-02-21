@@ -22,6 +22,8 @@ use rust_htslib::bam::{
     Read,
 };
 
+pub use gskits;
+
 pub type BamRecord = rust_htslib::bam::record::Record;
 pub type BamWriter = rust_htslib::bam::Writer;
 pub type BamReader = rust_htslib::bam::Reader;
