@@ -112,15 +112,19 @@ impl<'a> MappingExt<'a> {
         (tend - tstart) as f32 / t_len as f32
     }
 
+    pub fn is_rev(&self) -> bool {
+        match self.strand {
+            Strand::Forward => false,
+            Strand::Reverse => true,
+        }
+    }
+
     pub fn aligned_2_str(&self, target: &[u8], query: &[u8]) -> (String, String) {
         let sbr_target = &target[self.target_start as usize..self.target_end as usize];
         let sbr_target = String::from_utf8(sbr_target.to_vec()).unwrap();
         let sbr_target = sbr_target.as_str();
         let sbr_query = &query[self.query_start as usize..self.query_end as usize];
-        let rev = match self.strand {
-            Strand::Forward => false,
-            Strand::Reverse => true,
-        };
+        let rev = self.is_rev();
         let sbr_query = if !rev {
             String::from_utf8(sbr_query.to_vec()).unwrap()
         } else {
