@@ -757,7 +757,8 @@ mod tests {
                 hit.is_supplementary,
                 MappingExt(hit).identity(),
                 hit.alignment.as_ref().unwrap().alignment_score
-            )
+            );
+            println!("{:?}", MappingExt(hit).aligned_2_str(targets[0].seq.as_bytes(), seq));
         });
 
         // aligner.mapopt.best_n = 100;
@@ -1142,5 +1143,61 @@ mod tests {
         println!("{}", alignment.pretty(x, y, 30));
 
 
+    }
+
+    #[test]
+    fn test_align_short() {
+        let seq = b"GGTAGCGTTACAAACAACAAGGAGGAGGAGGAAAAAAGAGAAGATGCTCTGCCCACCACGGGCTTCAAAATATGATGGTCCGTCCAGGTCATGTTCAGCGAGCTGGTG";
+        let qry = b"GGTAGCGTTTCAAACAACAAGGAGGAGGAGGAAAAAAGAGAAGATGCTCTGCCCACCACGGGCTTCAAAATATGATGGTCCGTCCAGGTCATGTTCAGCGAGCTGGTG";
+        let mut aligner = Aligner::builder()
+            .map_ont()
+            .with_cigar()
+            .with_sam_hit_only()
+            .with_sam_out()
+            .with_seq_and_id(seq, b"ref")
+            .unwrap();
+        aligner.idxopt.k = 3;
+        aligner.idxopt.w = 1;
+        aligner.mapopt.q_occ_frac = 0.;
+        aligner.mapopt.occ_dist = 0;
+        aligner.mapopt.a = 2;
+        aligner.mapopt.b = 5;
+        aligner.mapopt.q = 2;
+        aligner.mapopt.q2 = 24;
+        aligner.mapopt.e = 1;
+        aligner.mapopt.e2 = 0;
+
+
+
+        aligner.mapopt.min_cnt = 2;
+        aligner.mapopt.min_dp_max = 1; // min dp score
+        aligner.mapopt.min_chain_score = 1; // this is important for short insert
+        aligner.mapopt.min_ksw_len = 0;
+        aligner.mapopt.mid_occ_frac = 0.;
+        aligner.mapopt.min_mid_occ = 0;
+
+        println!("aligner.mapopt:{:?}", aligner.mapopt);
+        println!("--------------------");
+
+        println!("aligner.idxopt:{:?}", aligner.idxopt);
+
+        // b"AACGTCGTCGTCGTAAAAAAAAACGTGCCCGTTT",
+
+        for hit in aligner
+            .map(
+                qry,
+                false,
+                false,
+                None,
+                Some(&[67108864, 68719476736]),
+                Some(b"q"),
+            )
+            .unwrap()
+        {
+            let mapping_ext = MappingExt(&hit);
+            let aligned = mapping_ext.aligned_2_str(seq, qry);
+            println!("{}\n{}", aligned.0, aligned.1);
+        }
+        println!("hello");
     }
 }
