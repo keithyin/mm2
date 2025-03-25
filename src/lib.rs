@@ -170,7 +170,7 @@ pub fn query_seq_sender(
     filenames: &Vec<String>,
     sender: Sender<ReadInfo>,
     input_filter_params: &InputFilterParams,
-    oup_params: &OupParams
+    oup_params: &OupParams,
 ) {
     let mut file_idx = 0;
     for filename in filenames {
@@ -198,7 +198,7 @@ pub fn query_seq_sender(
                         .send(ReadInfo::from_bam_record(
                             &record,
                             qname_suffix.as_ref().map(|v| v.as_str()),
-                            &oup_params.pass_through_tags
+                            &oup_params.pass_through_tags,
                         ))
                         .unwrap();
                 }
@@ -1141,8 +1141,6 @@ mod tests {
         let alignment = aligner.semiglobal(x, y);
         println!("{alignment:?}");
         println!("{}", alignment.pretty(x, y, 30));
-
-
     }
 
     #[test]
@@ -1166,8 +1164,6 @@ mod tests {
         aligner.mapopt.q2 = 24;
         aligner.mapopt.e = 1;
         aligner.mapopt.e2 = 0;
-
-
 
         aligner.mapopt.min_cnt = 2;
         aligner.mapopt.min_dp_max = 1; // min dp score
@@ -1200,4 +1196,66 @@ mod tests {
         }
         println!("hello");
     }
+
+    #[test]
+    fn test_align_short2() {
+        let target = b"AAACAACAACGGAGGAGGAGGAAAAAA";
+        let qry = b"AAAAAAAACCCCCGGGGTTTTTGAGAGAGATATCTCTCTCAAAACCCCGGGGTTTTAAACAACCAACGAAGGAGGAGGAAAAAAAAAAAAAACCCCGGGGTTTTTGAGAAGATATCCTCTCAAAACCCCGAGGGTTTTAAACAACAACGGAGGAGGAGGTAAAAAAAAAAAAAAAACCCCGGGTTTTGGAGAGAAATATCTCTCTCAAACCCCCGGGGTTTTAAACAACAACGGAGGAGGAGGAAAAAAAAAAAGAAAAAACCCACGGGTTTGATGAGAGATATCCTCTCAACCCCGGGTTTTTAACAAACACGGAGGAGGAGAAAAAAAAAAAAAAAAAAAAACCCCGGGGTTTTGGAGAGAGAATTTCTTCTCTCACAACCCCGGGGTTTTAAACACAACGAGGAGGAGGAAAAAAAAAAAACCCCGGGGTTTTGGAGAGAGAATATCTCTCTCAAACCCCGGGGTTTTTAAACAACAACGGAGGAGGAGGAAAAAAAAAACCCCGGGGTTTTGAAGAGATATCTCTCTCAAAAACCCCGGGTTTTAAAACAACAACGGAGGGGAGGAAACAAAAAAAAAAAAAAAAAAAATAAAAAAAAAAAAAAAAAGAAAAAAAAAAAACCCGGGAGTTTTTGAGAGATATCTCTCTCAAAAACCCCGGGGTTTTAAACAACAACGGAGGGAGGAGGTGAAGAGGAGGAGGAAAAAAAGGAGGAGAAAAAAAAAAAAAACCCCGGGGTTTTGAGAGAGATATCTCTCTCCAAAACCCTGGTTTTTAAACAACAAACGGAGGAGGAGGAAAAAAAAAACCCGGGGGTTTTGAGAGCAGATATCTCTCTCAAAACCCCGGGGTTTAAACAAAAACAACAACGGAAGGAGGGGAAAAAAAAAAAAAAAAAAAAAGAGGAAAAAAAAAAGCAAAAAAAAACCCCGGGGTTTTGAGAGAGAGAAGATTCTCTCTCAAAACCCCGGGGTTTTAAACAACTACGAGGAGGAGGAAAAAAAAAAAATCCCAAAAAAAAACACCGGGGTTTTGAGAGAGATATCTCTCTCAAACCCCGGGGTTTTAAACAACAGACGGAGGAGGAGGAAAAAAAAAAATAAAAAAAAAAAGGGCAAAAAAAACCCCGGGGTTTTGAGAGAGAATATCTCTCTCAAAACGCCCGGGTTTTAAAACAACAACAGGAGGAGGGAAAAAGAAAAGGAGGAAAAAAAAAACCCCCCGGGGTTTTGAGAAATATCTCCTCAAAACCCCGGGGTTTTAAACAACAACGAGGAGGAGGAAAAAAAAAACCCCGGGGTTTTGAGAGGATATCTCTCTCAAAATATCAAAACCCGGGGTTTAAACAACACGGATAGGACGAGGAAAAAAAAAACCCTCGGGGTTTTGAGAGAGATATCTCTCTCAAACCCCGGGGTTTTAAACAACAACGGAGGAGGAGGGAAAAAGTAAAAAAACCCCGGGGTTTTGAGAGAGAAGAAGAGATATCACTCTCAAAAACCCCGGAGGTTTTACCAACAACAA";
+
+        let mut aligner = Aligner::builder()
+            .sr()
+            .with_cigar()
+            .with_sam_hit_only()
+            .with_sam_out();
+        aligner.idxopt.k = 5;
+        aligner.idxopt.w = 3;
+        let mut aligner = aligner.with_seq_and_id(target, b"ref").unwrap();
+
+        // aligner.mapopt.q_occ_frac = 0.;
+        // aligner.mapopt.occ_dist = 0;
+
+        aligner.mapopt.min_cnt = 3;
+        aligner.mapopt.min_dp_max = 30; // min dp score
+        aligner.mapopt.min_chain_score = 5; // this is important for short insert
+        aligner.mapopt.min_ksw_len = 0;
+        aligner.mapopt.mid_occ_frac = 0.;
+        aligner.mapopt.min_mid_occ = 0;
+
+        println!("aligner.mapopt:{:?}", aligner.mapopt);
+        println!("--------------------");
+
+        println!("aligner.idxopt:{:?}", aligner.idxopt);
+
+        // b"AACGTCGTCGTCGTAAAAAAAAACGTGCCCGTTT",
+
+        for hit in aligner
+            .map(
+                qry,
+                false,
+                false,
+                None,
+                Some(&[67108864, 68719476736]),
+                Some(b"q"),
+            )
+            .unwrap()
+        {
+            let mapping_ext = MappingExt(&hit);
+            let aligned = mapping_ext.aligned_2_str(target, qry);
+            println!("{}\n{}", aligned.0, aligned.1);
+            println!("hit:{hit:?}");
+        }
+        println!("hello");
+    }
 }
+
+/*
+
+sr
+aligner.mapopt:mm_mapopt_t { flag: 1077997644, seed: 11, sdust_thres: 0, max_qlen: 0, bw: 100, bw_long: 100, max_gap: 100, max_gap_ref: -1, max_frag_len: 800, max_chain_skip: 25, max_chain_iter: 5000, min_cnt: 2, min_chain_score: 1, chain_gap_scale: 0.8, chain_skip_scale: 0.0, rmq_size_cap: 100000, rmq_inner_dist: 1000, rmq_rescue_size: 1000, rmq_rescue_ratio: 0.1, mask_level: 0.5, mask_len: 2147483647, pri_ratio: 0.5, best_n: 20, alt_drop: 0.15, a: 2, b: 8, q: 12, e: 2, q2: 24, e2: 1, transition: 0, sc_ambi: 1, noncan: 0, junc_bonus: 0, zdrop: 100, zdrop_inv: 100, end_bonus: 10, min_dp_max: 1, min_ksw_len: 0, anchor_ext_len: 20, anchor_ext_shift: 6, max_clip_ratio: 1.0, rank_min_len: 500, rank_frac: 0.9, pe_ori: 1, pe_bonus: 33, mid_occ_frac: 0.0, q_occ_frac: 0.0, min_mid_occ: 0, max_mid_occ: 1000000, mid_occ: 1000, max_occ: 5000, max_max_occ: 4095, occ_dist: 0, mini_batch_size: 50000000, max_sw_mat: 100000000, cap_kalloc: 500000000, split_prefix: 0x0 }
+
+aligner.mapopt:mm_mapopt_t { flag: 1077997644, seed: 11, sdust_thres: 0, max_qlen: 0, bw: 100, bw_long: 100, max_gap: 100, max_gap_ref: -1, max_frag_len: 800, max_chain_skip: 25, max_chain_iter: 5000, min_cnt: 2, min_chain_score: 1, chain_gap_scale: 0.8, chain_skip_scale: 0.0, rmq_size_cap: 100000, rmq_inner_dist: 1000, rmq_rescue_size: 1000, rmq_rescue_ratio: 0.1, mask_level: 0.5, mask_len: 2147483647, pri_ratio: 0.5, best_n: 20, alt_drop: 0.15, a: 2, b: 8, q: 12, e: 2, q2: 24, e2: 1, transition: 0, sc_ambi: 1, noncan: 0, junc_bonus: 0, zdrop: 100, zdrop_inv: 100, end_bonus: 10, min_dp_max: 1, min_ksw_len: 0, anchor_ext_len: 20, anchor_ext_shift: 6, max_clip_ratio: 1.0, rank_min_len: 500, rank_frac: 0.9, pe_ori: 1, pe_bonus: 33, mid_occ_frac: 0.0, q_occ_frac: 0.0, min_mid_occ: 0, max_mid_occ: 1000000, mid_occ: 1000, max_occ: 5000, max_max_occ: 4095, occ_dist: 0, mini_batch_size: 50000000, max_sw_mat: 100000000, cap_kalloc: 500000000, split_prefix: 0x0 }
+ont
+aligner.mapopt:mm_mapopt_t { flag: 1073741900, seed: 11, sdust_thres: 0, max_qlen: 0, bw: 500, bw_long: 20000, max_gap: 5000, max_gap_ref: -1, max_frag_len: 0, max_chain_skip: 25, max_chain_iter: 5000, min_cnt: 2, min_chain_score: 1, chain_gap_scale: 0.8, chain_skip_scale: 0.0, rmq_size_cap: 100000, rmq_inner_dist: 1000, rmq_rescue_size: 1000, rmq_rescue_ratio: 0.1, mask_level: 0.5, mask_len: 2147483647, pri_ratio: 0.8, best_n: 1, alt_drop: 0.15, a: 2, b: 4, q: 4, e: 2, q2: 24, e2: 1, transition: 0, sc_ambi: 1, noncan: 0, junc_bonus: 0, zdrop: 400, zdrop_inv: 200, end_bonus: -1, min_dp_max: 1, min_ksw_len: 0, anchor_ext_len: 20, anchor_ext_shift: 6, max_clip_ratio: 1.0, rank_min_len: 500, rank_frac: 0.9, pe_ori: 0, pe_bonus: 33, mid_occ_frac: 0.0, q_occ_frac: 0.0, min_mid_occ: 0, max_mid_occ: 1000000, mid_occ: 1000, max_occ: 0, max_max_occ: 4095, occ_dist: 0, mini_batch_size: 500000000, max_sw_mat: 100000000, cap_kalloc: 500000000, split_prefix: 0x0 }
+
+
+*/

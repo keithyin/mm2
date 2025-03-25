@@ -26,8 +26,41 @@ pub struct Cli {
         help="read https://lh3.github.io/minimap2/minimap2.html for more details")]
     pub preset: String,
 
+    #[arg(
+        long = "short-aln",
+        help = "if the 30 < query_len OR target <200, use short aln mode"
+    )]
+    pub short_aln: bool,
+
     #[command(flatten)]
     pub metric_args: MetricArgs,
+}
+impl Cli {
+    pub fn post_process_param(&mut self) {
+        if self.short_aln {
+            if self.metric_args.index_args.kmer.is_none() {
+                self.metric_args.index_args.kmer = Some(5);
+            }
+            if self.metric_args.index_args.wins.is_none() {
+                self.metric_args.index_args.wins = Some(3);
+            }
+
+            if self.metric_args.align_args.min_cnt.is_none() {
+                self.metric_args.align_args.min_cnt = Some(3);
+            }
+            if self.metric_args.align_args.min_dp_max.is_none() {
+                self.metric_args.align_args.min_dp_max = Some(20);
+            }
+
+            if self.metric_args.align_args.min_chain_score.is_none() {
+                self.metric_args.align_args.min_chain_score = Some(5);
+            }
+
+            if self.metric_args.align_args.min_ksw_len.is_none() {
+                self.metric_args.align_args.min_ksw_len = Some(0);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Args, Clone, Copy, Default)]
@@ -172,22 +205,22 @@ pub struct AlignArgs {
 
     #[arg(short = 'e', help = "gap_extension_penalty >=0, recommend 2,1")]
     gap_extension_penalty: Option<String>,
+
+    #[arg(long = "min-cnt", help = "min_cnt")]
+    pub min_cnt: Option<i32>,
+    #[arg(long = "min-dp-max", help = "min dp max")]
+    pub min_dp_max: Option<i32>,
+    #[arg(long = "min-chain-score", help = "min chain score")]
+    pub min_chain_score: Option<i32>,
+    #[arg(long = "min-ksw-len", help = "min ksw len")]
+    pub min_ksw_len: Option<i32>,
 }
 
 impl AlignArgs {
     pub fn to_align_params(&self) -> AlignParams {
         let mut param = AlignParams::new();
-        param = if let Some(ms) = self.matching_score {
-            param.set_m_score(ms)
-        } else {
-            param
-        };
-
-        param = if let Some(mms) = self.mismatch_penalty {
-            param.set_mm_score(mms)
-        } else {
-            param
-        };
+        param.matching_score = self.matching_score;
+        param.mismatch_penalty = self.mismatch_penalty;
 
         param = if let Some(ref go) = self.gap_open_penalty {
             param.set_gap_open_penalty(go.to_string())
@@ -200,6 +233,11 @@ impl AlignArgs {
         } else {
             param
         };
+
+        param.min_cnt = self.min_cnt;
+        param.min_dp_max = self.min_dp_max;
+        param.min_chain_score = self.min_chain_score;
+        param.min_ksw_len = self.min_ksw_len;
 
         param
     }
@@ -273,7 +311,12 @@ fn metric_entrance(preset: &str, tot_threads: Option<usize>, args: &MetricArgs) 
         let oup_params = &oup_params;
         let (qs_sender, qs_recv) = crossbeam::channel::bounded(1000);
         s.spawn(move || {
-            query_seq_sender(&args.io_args.query, qs_sender, inp_filter_params, oup_params);
+            query_seq_sender(
+                &args.io_args.query,
+                qs_sender,
+                inp_filter_params,
+                oup_params,
+            );
         });
 
         let align_threads = tot_threads - 4;
@@ -300,7 +343,7 @@ fn metric_entrance(preset: &str, tot_threads: Option<usize>, args: &MetricArgs) 
 }
 
 fn main() {
-    let args = Cli::parse();
+    let mut args = Cli::parse();
 
     let align_threads = args.threads.clone();
 
@@ -381,6 +424,12 @@ pub fn compute_metric(
     }
 
     let target_name = hits[0].target_name.as_ref().unwrap().as_ref().clone();
+    
+    hits = hits
+        .into_iter()
+        .filter(|hit| hit.target_name.as_ref().unwrap().as_ref() == &target_name)
+        .collect::<Vec<_>>();
+
     let target_seq = targetname2seq.get(&target_name).unwrap();
     let mut metric = Metric::new(
         query_record.name.clone(),

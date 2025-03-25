@@ -60,6 +60,11 @@ pub struct AlignParams {
     pub mismatch_penalty: Option<i32>,
     pub gap_open_penalty: Option<String>,
     pub gap_extension_penalty: Option<String>,
+
+    pub min_cnt: Option<i32>,
+    pub min_dp_max: Option<i32>,
+    pub min_chain_score: Option<i32>,
+    pub min_ksw_len: Option<i32>,
 }
 
 impl AlignParams {
@@ -117,6 +122,21 @@ impl TOverrideAlignerParam for AlignParams {
                 aligner.mapopt.e = gap_e.parse::<i32>().unwrap();
             }
         }
+
+        if let Some(min_cnt) = self.min_cnt {
+            aligner.mapopt.min_cnt = min_cnt;
+        }
+
+        if let Some(min_dp_max) = self.min_dp_max {
+            aligner.mapopt.min_dp_max = min_dp_max;
+        }
+
+        if let Some(min_chain_score) = self.min_chain_score {
+            aligner.mapopt.min_chain_score = min_chain_score;
+        }
+        if let Some(min_ksw_len) = self.min_ksw_len {
+            aligner.mapopt.min_ksw_len = min_ksw_len;
+        }
     }
 }
 
@@ -167,7 +187,7 @@ pub struct OupParams {
     pub oup_identity_threshold: f32,
     pub oup_coverage_threshold: f32,
     pub discard_multi_align_reads: bool,
-    pub pass_through_tags: HashSet<String>, 
+    pub pass_through_tags: HashSet<String>,
 }
 
 impl Default for OupParams {
@@ -223,7 +243,8 @@ impl OupParams {
 
     pub fn set_pass_through_tags(mut self, tags: Option<&String>) -> Self {
         if let Some(tags) = tags {
-            self.pass_through_tags = tags.trim()
+            self.pass_through_tags = tags
+                .trim()
                 .split(",")
                 .map(|v| v.to_string())
                 .collect::<HashSet<_>>();
