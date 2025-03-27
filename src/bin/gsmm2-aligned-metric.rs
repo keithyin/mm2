@@ -144,6 +144,9 @@ pub struct IoArgs {
         help = "0.9:1.1 means 0.9<=rq<=1.1. only valid for bam input that contains rq field"
     )]
     pub rq_range: Option<String>,
+
+    #[arg(long = "qname-suffix", help = "suffix for query name")]
+    pub qname_suffix: Option<String>,
 }
 
 impl IoArgs {
@@ -178,6 +181,8 @@ impl IoArgs {
         } else {
             param
         };
+
+        param.qname_suffix = self.qname_suffix.clone();
 
         param
     }

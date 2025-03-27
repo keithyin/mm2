@@ -14,6 +14,7 @@ pub trait TOverrideAlignerParam {
 pub struct InputFilterParams {
     pub np_range: Option<Range<i32>>,
     pub rq_range: Option<Range<f32>>,
+    pub qname_suffix: Option<String>
 }
 
 impl InputFilterParams {
@@ -47,6 +48,12 @@ impl InputFilterParams {
                 if !rq_range_.within_range(rq) {
                     return false;
                 }
+            }
+        }
+
+        if let Some(qname_suffix) = &self.qname_suffix {
+            if !record_ext.get_qname().ends_with(qname_suffix) {
+                return false;
             }
         }
 
