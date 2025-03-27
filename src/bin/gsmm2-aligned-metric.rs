@@ -348,7 +348,7 @@ fn metric_entrance(preset: &str, tot_threads: Option<usize>, args: &MetricArgs) 
 }
 
 fn main() {
-    let mut args = Cli::parse();
+    let args = Cli::parse();
 
     let align_threads = args.threads.clone();
 
