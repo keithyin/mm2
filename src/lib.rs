@@ -11,7 +11,7 @@ use std::{
 };
 
 use crossbeam::channel::{Receiver, Sender};
-use gskits::{dna::reverse_complement, ds::ReadInfo, fastx_reader::fasta_reader::FastaFileReader};
+use gskits::{dna::reverse_complement, ds::ReadInfo, fastx_reader::{fasta_reader::FastaFileReader, fastq_reader::FastqReader}};
 use mapping_ext::MappingExt;
 use minimap2::{Aligner, Built, Mapping};
 use params::{
@@ -204,7 +204,7 @@ pub fn query_seq_sender(
                 }
             }
         } else if filename.ends_with("fq") || filename.ends_with("fastq") {
-            let fa_iter = FastaFileReader::new(filename.to_string());
+            let fa_iter = FastqReader::new(filename.to_string());
             for mut record in fa_iter {
                 if let Some(suffix) = &qname_suffix {
                     record.seq.push_str(suffix);
