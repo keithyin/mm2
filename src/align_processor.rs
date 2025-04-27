@@ -149,7 +149,7 @@ impl AlignInfo {
         let aligned_target_seq = if self.fwd {
             target_seq[self.rstart..self.rend].to_string()
         } else {
-            reverse_complement(&target_seq[self.rstart..self.rend])
+            String::from_utf8(reverse_complement(target_seq[self.rstart..self.rend].as_bytes())).unwrap()
         };
 
         let query_seq = query_seq[self.qstart..self.qend].to_string();

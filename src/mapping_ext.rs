@@ -128,7 +128,7 @@ impl<'a> MappingExt<'a> {
         let sbr_query = if !rev {
             String::from_utf8(sbr_query.to_vec()).unwrap()
         } else {
-            reverse_complement(String::from_utf8(sbr_query.to_vec()).unwrap().as_str())
+            String::from_utf8(reverse_complement(sbr_query)).unwrap()
         };
 
         let sbr_query = sbr_query.as_str();

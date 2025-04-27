@@ -308,7 +308,7 @@ pub fn build_bam_record_from_mapping(
         minimap2::Strand::Forward => None,
         minimap2::Strand::Reverse => {
             is_rev = true;
-            Some(reverse_complement(seq))
+            Some(String::from_utf8(reverse_complement(seq.as_bytes())).unwrap())
         }
     };
 
