@@ -2,7 +2,7 @@ use gskits::{dna::SEQ_NT4_TABLE, ds::region::Regions};
 use lazy_static::lazy_static;
 use std::fmt::Display;
 
-use super::{AlignInfo, SingleQueryAlignInfo};
+use super::{AlignInfo, SingleQueryAlignInfo, TMetric};
 
 #[derive(Debug)]
 pub struct Metric {
@@ -56,11 +56,46 @@ impl Metric {
         }
     }
 
-    pub fn add_align_info(&mut self, align_info: AlignInfo) {
+    pub fn matched(&self) -> usize {
+        self.matched_cnt.iter().copied().sum::<usize>()
+    }
+
+    pub fn mismatched(&self) -> usize {
+        self.mismatched_cnt.iter().copied().sum::<usize>()
+    }
+
+    pub fn homoins(&self) -> usize {
+        self.homoins_cnt.iter().copied().sum::<usize>()
+    }
+
+    pub fn non_homoins(&self) -> usize {
+        self.non_homoins_cnt.iter().copied().sum::<usize>()
+    }
+
+    pub fn homodel(&self) -> usize {
+        self.homodel_cnt.iter().copied().sum::<usize>()
+    }
+
+    pub fn non_homodel(&self) -> usize {
+        self.non_homodel_cnt.iter().copied().sum::<usize>()
+    }
+
+    pub fn aligned_span(&self) -> usize {
+        self.matched()
+            + self.mismatched()
+            + self.homoins()
+            + self.non_homoins()
+            + self.homodel()
+            + self.non_homodel()
+    }
+}
+
+impl TMetric for Metric {
+    fn add_align_info(&mut self, align_info: AlignInfo) {
         self.align_infos.push(align_info);
     }
 
-    pub fn compute_metric(&mut self, target_seq: &str, query_seq: &str) {
+    fn compute_metric(&mut self, target_seq: &str, query_seq: &str) {
         if self.align_infos.is_empty() {
             return;
         }
@@ -164,39 +199,6 @@ impl Metric {
             .map(|v| format!("{}:{}", v.0, v.1))
             .collect::<Vec<_>>()
             .join(";");
-    }
-
-    pub fn matched(&self) -> usize {
-        self.matched_cnt.iter().copied().sum::<usize>()
-    }
-
-    pub fn mismatched(&self) -> usize {
-        self.mismatched_cnt.iter().copied().sum::<usize>()
-    }
-
-    pub fn homoins(&self) -> usize {
-        self.homoins_cnt.iter().copied().sum::<usize>()
-    }
-
-    pub fn non_homoins(&self) -> usize {
-        self.non_homoins_cnt.iter().copied().sum::<usize>()
-    }
-
-    pub fn homodel(&self) -> usize {
-        self.homodel_cnt.iter().copied().sum::<usize>()
-    }
-
-    pub fn non_homodel(&self) -> usize {
-        self.non_homodel_cnt.iter().copied().sum::<usize>()
-    }
-
-    pub fn aligned_span(&self) -> usize {
-        self.matched()
-            + self.mismatched()
-            + self.homoins()
-            + self.non_homoins()
-            + self.homodel()
-            + self.non_homodel()
     }
 }
 

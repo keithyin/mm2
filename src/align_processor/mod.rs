@@ -14,6 +14,7 @@ use rust_htslib::bam::ext::BamRecordExtensions;
 use crate::convert_mapping_cigar_to_record_cigar;
 
 pub mod align_metric;
+pub mod time_err_metric;
 
 pub struct TseqAndRecord {
     pub ori_rstart: usize, // 用来存储 当前比对片段 对应 原始比对区域的 rstart
@@ -149,7 +150,10 @@ impl AlignInfo {
         let aligned_target_seq = if self.fwd {
             target_seq[self.rstart..self.rend].to_string()
         } else {
-            String::from_utf8(reverse_complement(target_seq[self.rstart..self.rend].as_bytes())).unwrap()
+            String::from_utf8(reverse_complement(
+                target_seq[self.rstart..self.rend].as_bytes(),
+            ))
+            .unwrap()
         };
 
         let query_seq = query_seq[self.qstart..self.qend].to_string();
@@ -224,4 +228,9 @@ impl DerefMut for SingleQueryAlignInfo {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
+}
+
+pub trait TMetric: Send + Display{
+    fn add_align_info(&mut self, align_info: AlignInfo);
+    fn compute_metric(&mut self, target_seq: &str, query_seq: &str);
 }
