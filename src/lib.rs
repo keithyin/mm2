@@ -26,6 +26,7 @@ use rust_htslib::bam::{
     Read,
 };
 
+pub use minimap2;
 pub use gskits;
 
 pub type BamRecord = rust_htslib::bam::record::Record;
