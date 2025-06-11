@@ -15,6 +15,7 @@ use crate::convert_mapping_cigar_to_record_cigar;
 
 pub mod align_metric;
 pub mod time_err_metric;
+pub mod hp_tr_metric;
 
 pub struct TseqAndRecord {
     pub ori_rstart: usize, // 用来存储 当前比对片段 对应 原始比对区域的 rstart

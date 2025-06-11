@@ -26,6 +26,7 @@ minimap2="=0.1.23"
 num_cpus="1.16"
 crossbeam = "0.8"
 gskits="0.15.12"
+hp_tr_finder = "0.2"
 
 [profile.release]
 debug = true

@@ -28,6 +28,7 @@ use rust_htslib::bam::{
 
 pub use minimap2;
 pub use gskits;
+pub mod aligned_pairs;
 
 pub type BamRecord = rust_htslib::bam::record::Record;
 pub type BamWriter = rust_htslib::bam::Writer;

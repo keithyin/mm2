@@ -6,7 +6,7 @@ use gskits::{
     pbar::{self, DEFAULT_INTERVAL},
     utils::command_line_str,
 };
-use rust_htslib::bam::{header::HeaderRecord, record::Aux, Header};
+use rust_htslib::bam::{ext::BamRecordExtensions, header::HeaderRecord, record::{self, Aux}, Header};
 
 use crate::{params::OupParams, AlignResult};
 
@@ -104,6 +104,7 @@ pub fn write_bam_worker(
     for align_res in recv {
         pb.as_ref().unwrap().inc(1);
         for mut record in align_res.records {
+            // record.aligned_pairs()
             if oup_args.valid(&record) {
                 let record_ext = BamRecordExt::new(&record);
                 let iy = record_ext.compute_identity();
@@ -117,4 +118,5 @@ pub fn write_bam_worker(
         }
     }
     pb.as_ref().unwrap().finish();
+
 }

@@ -706,6 +706,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d231dfb89cfffdbc30e7fc41579ed6066ad03abda9e567ccafae602b97ec5024"
 
 [[package]]
+name = "hp_tr_finder"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d215666f131b96b325883f019ba8813d45f873edb3fa29ad4e9d152e23b2f5b"
+dependencies = [
+ "intervaltree",
+ "regex",
+]
+
+[[package]]
 name = "hts-sys"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -911,6 +921,15 @@ dependencies = [
  "portable-atomic",
  "unicode-width",
  "web-time",
+]
+
+[[package]]
+name = "intervaltree"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "270bc34e57047cab801a8c871c124d9dc7132f6473c6401f645524f4e6edd111"
+dependencies = [
+ "smallvec",
 ]
 
 [[package]]
@@ -1120,6 +1139,7 @@ dependencies = [
  "crossbeam",
  "glob",
  "gskits",
+ "hp_tr_finder",
  "indicatif",
  "lazy_static",
  "minimap2",
