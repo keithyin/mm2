@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
-use std::rc::Rc;
 use std::sync::Arc;
 use std::{path, thread};
 
@@ -9,7 +8,7 @@ use crossbeam::channel::{Receiver, Sender};
 use gskits::fastx_reader::fasta_reader::FastaFileReader;
 use gskits::fastx_reader::read_fastx;
 use gskits::pbar::{self, DEFAULT_INTERVAL};
-use hp_tr_finder::{all_seq_hp_tr_finder, intervaltree, Region2Motif, UnitAndRepeats};
+use hp_tr_finder::{all_seq_hp_tr_finder, UnitAndRepeats};
 use mm2::align_processor::hp_tr_metric::HpTrMetric;
 use mm2::align_processor::time_err_metric::TimeErrMetric;
 use mm2::align_processor::TMetric;
@@ -160,7 +159,7 @@ impl IoArgs {
             oup.to_string()
         } else {
             format!(
-                "{}.gsmm2-time-err.csv",
+                "{}.gsmm2-hp-tr-fact.csv",
                 self.query[0].rsplit_once(".").unwrap().0
             )
         };
@@ -282,6 +281,24 @@ impl OupArgs {
     }
 }
 
+fn main() {
+    let args = Cli::parse();
+
+    let align_threads = args.threads.clone();
+
+    let time_fmt = time::format_description::parse(
+        "[year]-[month padding:zero]-[day padding:zero]#[hour]:[minute]:[second]",
+    )
+    .unwrap();
+
+    let time_offset =
+        time::UtcOffset::current_local_offset().unwrap_or_else(|_| time::UtcOffset::UTC);
+    let timer = tracing_subscriber::fmt::time::OffsetTime::new(time_offset, time_fmt.clone());
+    tracing_subscriber::fmt::fmt().with_timer(timer).init();
+
+    metric_entrance(&args.preset, align_threads, &args.metric_args);
+}
+
 fn metric_entrance(preset: &str, tot_threads: Option<usize>, args: &MetricArgs) {
     let tot_threads = tot_threads.unwrap_or(num_cpus::get());
     assert!(tot_threads >= 10, "at least 10 threads are needed");
@@ -302,13 +319,13 @@ fn metric_entrance(preset: &str, tot_threads: Option<usize>, args: &MetricArgs) 
         UnitAndRepeats::new(4, 3).build_finder_regrex(),
     ];
 
-    let region2motif: HashMap<Arc<String>, Arc<intervaltree::IntervalTree<usize, Arc<String>>>> =
-        all_seq_hp_tr_finder(&all_regs, &targetname2seq)
-            .into_iter()
-            .map(|(seqname, region2motif)| {
-                (seqname, Arc::new(region2motif.to_interval_search_tree()))
-            })
-            .collect::<HashMap<_, _>>();
+    let region2motif: HashMap<
+        Arc<String>,
+        Arc<HashMap<usize, Vec<((usize, usize), Arc<String>)>>>,
+    > = all_seq_hp_tr_finder(&all_regs, &targetname2seq)
+        .into_iter()
+        .map(|(seqname, region2motif)| (seqname, Arc::new(region2motif.flatten())))
+        .collect::<HashMap<_, _>>();
 
     let index_params = args.index_args.to_index_params();
     let map_params = args.map_args.to_map_params();
@@ -382,30 +399,12 @@ fn metric_entrance(preset: &str, tot_threads: Option<usize>, args: &MetricArgs) 
     });
 }
 
-fn main() {
-    let args = Cli::parse();
-
-    let align_threads = args.threads.clone();
-
-    let time_fmt = time::format_description::parse(
-        "[year]-[month padding:zero]-[day padding:zero]#[hour]:[minute]:[second]",
-    )
-    .unwrap();
-
-    let time_offset =
-        time::UtcOffset::current_local_offset().unwrap_or_else(|_| time::UtcOffset::UTC);
-    let timer = tracing_subscriber::fmt::time::OffsetTime::new(time_offset, time_fmt.clone());
-    tracing_subscriber::fmt::fmt().with_timer(timer).init();
-
-    metric_entrance(&args.preset, align_threads, &args.metric_args);
-}
-
 pub fn hp_tr_metric_worker(
     query_record_recv: Receiver<gskits::ds::ReadInfo>,
     metric_sender: Sender<Box<dyn TMetric>>,
     aligners: &Vec<NoMemLeakAligner>,
     targetname2seq: &HashMap<Arc<String>, String>,
-    region2motifs: &HashMap<Arc<String>, Arc<intervaltree::IntervalTree<usize, Arc<String>>>>,
+    region2motifs: &HashMap<Arc<String>, Arc<HashMap<usize, Vec<((usize, usize), Arc<String>)>>>>,
     oup_params: &OupParams,
 ) {
     for query_record in query_record_recv {
@@ -428,13 +427,13 @@ pub fn dump_metric_worker(metric_recv: Receiver<Box<dyn TMetric>>, fname: &str, 
     writeln!(
         &mut writer,
         "{}",
-        mm2::align_processor::time_err_metric::METRIC_CSV_HEADER.join("\t")
+        mm2::align_processor::hp_tr_metric::METRIC_CSV_HEADER.join("\t")
     )
     .unwrap();
 
     let pb = if enable_pb {
         Some(pbar::get_spin_pb(
-            format!("gsmm2-time-err: writing metric to {}", fname),
+            format!("gsmm2-hp-tr-metric: writing metric to {}", fname),
             DEFAULT_INTERVAL,
         ))
     } else {
@@ -454,7 +453,7 @@ pub fn build_hp_tr_metric(
     query_record: &gskits::ds::ReadInfo,
     aligners: &Vec<NoMemLeakAligner>,
     targetname2seq: &HashMap<Arc<String>, String>,
-    region2motifs: &HashMap<Arc<String>, Arc<intervaltree::IntervalTree<usize, Arc<String>>>>,
+    region2motifs: &HashMap<Arc<String>, Arc<HashMap<usize, Vec<((usize, usize), Arc<String>)>>>>,
     oup_params: &OupParams,
     debug: bool,
 ) -> Box<dyn TMetric> {
@@ -544,12 +543,10 @@ mod test {
 
         let region2motif: HashMap<
             Arc<String>,
-            Arc<intervaltree::IntervalTree<usize, Arc<String>>>,
+            Arc<HashMap<usize, Vec<((usize, usize), Arc<String>)>>>,
         > = all_seq_hp_tr_finder(&all_regs, &targetname2seq)
             .into_iter()
-            .map(|(seqname, region2motif)| {
-                (seqname, Arc::new(region2motif.to_interval_search_tree()))
-            })
+            .map(|(seqname, region2motif)| (seqname, Arc::new(region2motif.flatten())))
             .collect::<HashMap<_, _>>();
 
         let mut index_params = IndexParams::default();
@@ -603,12 +600,10 @@ mod test {
 
         let region2motif: HashMap<
             Arc<String>,
-            Arc<intervaltree::IntervalTree<usize, Arc<String>>>,
+            Arc<HashMap<usize, Vec<((usize, usize), Arc<String>)>>>,
         > = all_seq_hp_tr_finder(&all_regs, &targetname2seq)
             .into_iter()
-            .map(|(seqname, region2motif)| {
-                (seqname, Arc::new(region2motif.to_interval_search_tree()))
-            })
+            .map(|(seqname, region2motif)| (seqname, Arc::new(region2motif.flatten())))
             .collect::<HashMap<_, _>>();
         let mut index_params = IndexParams::default();
         index_params.kmer = Some(11);
