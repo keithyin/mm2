@@ -15,6 +15,7 @@ use gskits::{
     dna::reverse_complement,
     ds::ReadInfo,
     fastx_reader::{fasta_reader::FastaFileReader, fastq_reader::FastqReader},
+    phreq::phreq_list_2_quality,
 };
 use mapping_ext::MappingExt;
 use minimap2::{Aligner, Built, Mapping};
@@ -26,8 +27,8 @@ use rust_htslib::bam::{
     Read,
 };
 
-pub use minimap2;
 pub use gskits;
+pub use minimap2;
 pub mod aligned_pairs;
 
 pub type BamRecord = rust_htslib::bam::record::Record;
@@ -215,6 +216,8 @@ pub fn query_seq_sender(
                 if let Some(suffix) = &qname_suffix {
                     record.seq.push_str(suffix);
                 }
+                let rq = phreq_list_2_quality(record.qual.as_ref().unwrap()).unwrap_or(0.);
+                record.rq = Some(rq);
                 sender.send(record).unwrap();
             }
         } else {
