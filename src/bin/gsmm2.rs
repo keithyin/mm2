@@ -122,6 +122,9 @@ pub struct IoArgs {
 
     #[arg(long = "qname-suffix", help = "suffix for query name")]
     pub qname_suffix: Option<String>,
+
+    #[arg(long = "displayAlignment")]
+    pub display_alignment: bool
 }
 
 impl IoArgs {

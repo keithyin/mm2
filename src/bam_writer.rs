@@ -6,7 +6,7 @@ use gskits::{
     pbar::{self, DEFAULT_INTERVAL},
     utils::command_line_str,
 };
-use rust_htslib::bam::{ext::BamRecordExtensions, header::HeaderRecord, record::{self, Aux}, Header};
+use rust_htslib::bam::{header::HeaderRecord, record::Aux, Header};
 
 use crate::{params::OupParams, AlignResult};
 
@@ -15,17 +15,16 @@ pub struct BamOupArgs {
     pub ec_t: f32,
     pub no_seco: bool,
     pub no_supp: bool,
-    pub no_ma: bool
+    pub no_ma: bool,
 }
 impl BamOupArgs {
-
     pub fn new(iy_t: f32, ec_t: f32, no_seco: bool, no_supp: bool, no_ma: bool) -> Self {
-        Self{
+        Self {
             iy_t,
             ec_t,
             no_seco,
             no_supp,
-            no_ma
+            no_ma,
         }
     }
 
@@ -54,7 +53,6 @@ impl BamOupArgs {
     }
 }
 
-
 /// targetidx: &HashMap<target_name, (idx, target_len)>
 pub fn write_bam_worker(
     recv: Receiver<AlignResult>,
@@ -64,7 +62,6 @@ pub fn write_bam_worker(
     pg_name: &str,
     version: &str,
     enable_pb: bool,
-
 ) {
     let mut header = Header::new();
     let mut hd = HeaderRecord::new(b"HD");
@@ -107,6 +104,7 @@ pub fn write_bam_worker(
             // record.aligned_pairs()
             if oup_args.valid(&record) {
                 let record_ext = BamRecordExt::new(&record);
+
                 let iy = record_ext.compute_identity();
                 let ec = record_ext.compute_query_coverage();
 
@@ -118,5 +116,4 @@ pub fn write_bam_worker(
         }
     }
     pb.as_ref().unwrap().finish();
-
 }
