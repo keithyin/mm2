@@ -74,7 +74,7 @@ pub fn cigar_adjust_poly_gap_left_align(
         shift(aligned_target, aligned_seq, cur_idx);
     }
 
-    println!("{:?}", hit.alignment.as_ref().unwrap().cigar);
+    // println!("{:?}", hit.alignment.as_ref().unwrap().cigar);
     let new_cigars = aligned_pair_seqs_2_cigar(aligned_target, aligned_seq);
     hit.alignment.as_mut().unwrap().cigar = Some(new_cigars);
 }
