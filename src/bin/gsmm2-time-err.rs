@@ -273,8 +273,7 @@ impl OupArgs {
             .set_oup_identity_threshold(-1.0)
             .set_oup_coverage_threshold(-1.0)
             .set_discard_multi_align_reads(self.discard_multi_mapping_reads)
-            .set_pass_through_tags(Some(&"dw,ar".to_string()))
-            ;
+            .set_pass_through_tags(Some(&"dw,ar".to_string()));
         param
     }
 }
@@ -518,6 +517,7 @@ mod test {
 
     use crate::compute_timer_err;
 
+    #[ignore = "nofile"]
     #[test]
     fn test_compute_metric() {
         let ref_file = "test_data/MG1655.fa";
