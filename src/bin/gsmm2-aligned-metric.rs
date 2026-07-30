@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
-use std::{path, thread};
+use std::{path, println, thread};
 
 use crossbeam::channel::{Receiver, Sender};
 use gskits::fastx_reader::fasta_reader::FastaFileReader;
@@ -419,6 +419,11 @@ pub fn compute_metric(
         );
     }
 
+    // hits.iter()
+    //     .enumerate()
+    //     .for_each(|v| println!("idx:{}\n{:?}\n", v.0, v.1));
+    // println!("hits:{:?}", hits);
+
     let mut hits = hits
         .into_iter()
         .filter(|v| v.is_primary || (v.is_supplementary && !oup_params.discard_supplementary))
@@ -430,7 +435,7 @@ pub fn compute_metric(
     }
 
     let target_name = hits[0].target_name.as_ref().unwrap().as_ref().clone();
-    
+
     hits = hits
         .into_iter()
         .filter(|hit| hit.target_name.as_ref().unwrap().as_ref() == &target_name)
@@ -508,6 +513,55 @@ mod test {
             &targetname2seq,
             &OupParams::default(),
             false,
+        );
+    }
+
+    #[test]
+    #[ignore = "no_file"]
+    fn test_compute_metric3() {
+        let ref_file = "/data1/ccs_data/str-optimization/sanger_called_v2.fasta";
+        let fa_iter = FastaFileReader::new(ref_file.to_string());
+        let targets = read_fastx(fa_iter);
+
+        let targetname2seq = targets
+            .iter()
+            .map(|v| (v.name.clone(), v.seq.clone()))
+            .collect::<HashMap<String, String>>();
+
+        let mut index_params = IndexParams::default();
+        index_params.kmer = Some(11);
+        index_params.wins = Some(1);
+
+        let mut aligners = build_aligner(
+            "map-ont",
+            &index_params,
+            &MapParams::default(),
+            &AlignParams::default(),
+            &OupParams::default(),
+            &targets,
+            10,
+        );
+
+        // // aligner.mapopt.min_cnt = 2;
+        // aligner.mapopt.best_n = 100000;
+        // // aligner.mapopt.min_dp_max = 10; // min dp score
+        // aligner.mapopt.pri_ratio = 0.5; // min dp score
+        // aligner.idxopt;
+        println!("{:?}", aligners[0].mapopt);
+        println!("{:?}", aligners[0].idxopt);
+
+        aligners[0].mapopt.best_n = 100000;
+        aligners[0].mapopt.pri_ratio = 0.1;
+
+        let seq = b"GTGGTGCATTAATTCTATTATGTATATCTCCTTCTTAAAGTTAAACAAAATTATTTCTAGAGGGGAATTGTTATCCGCTCACAATTCCCCTATAGTGAGTCGTATTAATTTCGCGGGATCGAGATCTCGATCCTCTACGCCGGACGCATCGTGGCCGGCATCACCGGCGCCACAGGTGCGGTTGCTGGCGCCTATATCGCCGACATCACCGATGGGGAAGATCGGGCTCGCCACTTCGGGCTCATGAGCGCTTGTTTCGGCGTGGGTATGGTGGCAGGCCCCGTGGCCGGGGGACTGTTGGGCGCCATTTCCTTGCATGCACCATTCCTTGCGGCGGCGGTGCTCAACGGCCTCAACCTACTACTGGGCTGCTTCCTAATGCAGGAGTCGCATAAGGGAGAGCGTCGAGATCCCGGACACCATCGAATGGCGCAAAACCTTTCGCGGTATGGCATGATAGCGCCCGGAAGAGAGTCAATTCAGGGTGGTGAATGTGAAACCAGTAACGTTATACGATGTCGCAGAGTATGCCGGTGTCTCTTATCAGACCGTTTCCCGCGTGGTGAACCAGGCCAGCCACGTTTCTGCGAAAACGCGGGAAAAAGTGGAAGCGGCGATGGCGGAGCTGAATTACATTCCCAACCGCGTGGCACAACAACTGGCGGGCAAACAGTCGTTGCTGATTGGCGTTGCCACCTCCAGTCTGGCCCTGCACGCGCCGTCGCAAATTGTCGCGGCGATTAAATCTCGCGCCGATCAACTGGGTGCCAGCGTGGTGGTGTCGATGGTAGAACGAAGCGGCGTCGAAGCCTGTAAAGCGGCGGTGCACAATCTTCTCGCGCAACGCGTCAGTGGGCTGATCATTAACTATCCGCTGGATGACCAGGATGCCATTGCTGTGGAAGCTGCCTGCACTAATGTTCCGGCGTTATTTCTTGATGTCTCTGATAGAATTAATGCACCAC";
+        let query_record =
+            ReadInfo::new_fa_record("tt".to_string(), String::from_utf8(seq.to_vec()).unwrap());
+        compute_metric(
+            &query_record,
+            &aligners,
+            &targetname2seq,
+            &OupParams::default(),
+            true,
         );
     }
 

@@ -107,6 +107,7 @@ pub fn build_aligner(
                     .with_sam_hit_only()
                     .with_seq_and_id(target.seq.as_bytes(), target.name.as_bytes())
                     .unwrap();
+                
 
                 // https://github.com/lh3/minimap2/blob/618d33515e5853c4576d5a3d126fdcda28f0e8a4/options.c#L43
                 aligner.mapopt.best_n = 5; // top best_n chains are subjected to DP alignment
@@ -125,6 +126,8 @@ pub fn build_aligner(
 
     aligners
 }
+
+
 
 /// does not work now
 pub fn build_aligner_v2(

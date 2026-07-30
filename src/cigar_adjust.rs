@@ -57,6 +57,9 @@ fn aligned_pair_seqs_2_cigar(aligned_target: &[u8], aligned_seq: &[u8]) -> Vec<(
     cigars
 }
 
+/// TCAC--A  -->   TCA-C-A
+/// TCACCGA  -->   TCACCGA
+/// 调整 poly-N 区域的比对, 尽量将其调整为 gap-left-align
 pub fn cigar_adjust_poly_gap_left_align(
     hit: &mut minimap2::Mapping,
     target_seq: &[u8],
@@ -189,6 +192,65 @@ mod test {
         aligner.mapopt.q2 = 48;
         aligner.mapopt.e = 2;
         aligner.mapopt.e2 = 1;
+
+        let aligner = aligner
+            .with_seq_and_id(target_seq.as_bytes(), b"ref")
+            .unwrap();
+
+        for mut hit in aligner
+            .map(
+                query_seq.as_bytes(),
+                false,
+                false,
+                None,
+                Some(&[67108864, 68719476736]),
+                Some(b"q"),
+            )
+            .unwrap()
+        {
+            visualization::blast_like_alignment(query_seq, target_seq, &hit, None);
+
+            // cigar_adjust_poly_gap_left_align(&mut hit, target_seq.as_bytes(), query_seq.as_bytes());
+
+            // let hit_ext = MappingExt(&hit);
+
+            // let (aligned_target, aligned_seq) =
+            //     hit_ext.aligned_2_str(target_seq.as_bytes(), query_seq.as_bytes());
+
+            // assert_eq!(&aligned_target[..100], "CCAAGATGGAGTGAAAGTGTCTCAGGGGAATCGACGCGATCGAGATCGGTCGATATT---CCCCC--GGTCCACCTGGTCTCTCCACCTTAGGTACAAAG");
+            // assert_eq!(&aligned_seq[..100],    "CCAAGATGGAGTGAAAGTGTCTCAGGGGAATCGACGCGATCGAGATCGGTCGATATTCCCCCCCCGGGGTCCACCTGGTCTCTCCACCTTAGGTACAAAG");
+
+            // visualization::blast_like_alignment(query_seq, target_seq, &hit, None);
+        }
+    }
+
+    #[test]
+    fn test_short_aln() {
+        let target_seq = "AGCGTTGCGGCAGCCACTTCTTGAGCAGGTCAGAACACTGCACGTTGGCAAGCCCTTTGAGGCAGCCAGTTGTGCAGTCCACACACAGATCGACCTGTGCGATGAACTGCTCCATGGGCTCCAAGTCCTTGAACCCAGGAATCTCAGGAATGTCGACGATCGCCTCGCCTATGCCGCCCTGTGCGGACTCTTTGTCGCCTTCGTAGGTGTGGCAGCGTCCTGGGATGAACTTCTTCATCTTGGGCGTGCACTTGATGTGGGACAGGCAGATCAGACAGCCCCTGGTGCAGCCAGCTTTCCGGGCATTGGCTTCCATCTCTTTGAGCACCTCCAGCGGCAGCTTCTTGCCGGGCAACTTCCCGCGGTCAGCATCGAGATCCGTGGTCGCGAAGTTGCTGGCCACGGCCACGATGTTGAAGTCTTCGTTGTTCTCGGTGGGCTTGGCCTCGGCCACAGCGATGCAGATCAGGGCAAACAGAACTTTGACTCCCATTTTGCTGTATTCAACTTAACAATGAATTGTAATGTTTTAACCTCTTTCAAGCTAAGTGGTATAAACCCAACAAAGGGATATATAATAGCTCTATTAGTCACCGGATGGCCAATCCAATAGCTATATGGTAACGATCTCTCAATTGTCACCATAAGCAGCCAGTATAGGAATAAAATGAAACACGGACACCCAAAGTAGTCGGTTCCGCTGCAGAGTTGCCCGTTACGACACACTGCCCTCTGGCTTGAGGGTGTGTGCTCCGCAGTTAGGATTAGCCGCATTCAGGGGCCGGAGGACTACCAACTAGCTCAATAGACTCTTCGCACCATGTCTGTATTAGAGCGTCCCATGGGTTTCCCCATGGGCAGGCCGCCAACGCAGCCACCGCCACGGTCGCCCGTGGGGAATGCGGTGACTCATCGACCTGATCTACACTGGGGTAGTGCTGAGCGAAACACTCTGCAACTTCCACGGTGTTACTAGGTTTTTCGAAGTAGTTGGCCGGATAACGAACGCTTTCTCCTTCAACCGCGTGAGCAGTCTATTGATACTCAGTCCGGGGTAACAGAAGTGCTTGATCAAAACGTGGCTGGTGTGCCACGCTGACTGTTGATCGGTGTGTGTTACTTCTAAGTTACAGTTGGGGGAGGGGGTATAAAACAGGCGCACAAAGGTACCGTGATACCAGAGTGCTAGCGCCCAATGGGCCTGTGGGTGGGATCAACCCACAGGCTTGTTTTAATGTGTTTTGTTTTTTTGGTTTTTTTTTTGTTTTTTTTTTGTTTTTTGTTTTTCGGCTATTGCGGTTTCCGGCGTGGGGGTGGAGGGACTTGAACCCACACGACCGTTTAAGGTCAACGGATTTTAAGTCCGTAGCGTCTCGCCGGTAACGCATAATAGCCGTTTTGTTTTTTGTTTTTTTTTAGTCACCACCGGCCCCCTTGATCTTGTCCACCTGGCCCTGGATCTTGCTGGCAAAGGTCGCAC";
+        let query_seq = "CTTGCTGGCAAAGGTCGCAC";
+
+        println!("{}", &target_seq[343..370]);
+
+        let mut aligner = Aligner::builder()
+            .map_ont()
+            .with_cigar()
+            .with_sam_out()
+            .with_sam_hit_only();
+        // aligner.mapopt.a =
+        // aligner.idxopt.set_hpc();
+        // aligner.mapopt.a = 4;
+        // aligner.mapopt.b = 8;
+        // aligner.mapopt.q = 4;
+        // aligner.mapopt.q2 = 48;
+        // aligner.mapopt.e = 2;
+        // aligner.mapopt.e2 = 1;
+        aligner.idxopt.k = 3;
+        aligner.idxopt.w = 1;
+
+        aligner.mapopt.min_cnt = 2;
+        aligner.mapopt.min_dp_max = 10; // min dp score
+        aligner.mapopt.min_chain_score = 10; // this is important for short insert
+        aligner.mapopt.min_ksw_len = 0;
 
         let aligner = aligner
             .with_seq_and_id(target_seq.as_bytes(), b"ref")
