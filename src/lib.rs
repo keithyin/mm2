@@ -10,6 +10,7 @@ use std::{
     thread,
 };
 
+use cigar_adjust::cigar_adjust_poly_gap_left_align;
 use crossbeam::channel::{Receiver, Sender};
 use gskits::{
     dna::reverse_complement,
@@ -41,32 +42,46 @@ pub struct AlignResult {
     pub records: Vec<BamRecord>,
 }
 
-pub struct NoMemLeakAligner(pub Aligner<Built>);
+/// 单个 target 的 aligner 包装。除了 aligner 本身, 还保存该 aligner 的 index 所对应的
+/// target 序列, 以便对 hits 的 cigar 做后处理时需要读取 target 上的碱基
+/// (见 `cigar_adjust::cigar_adjust_poly_gap_left_align`)
+pub struct NoMemLeakAligner {
+    pub aligner: Aligner<Built>,
+    pub target_seq: Vec<u8>,
+}
+
+impl NoMemLeakAligner {
+    pub fn new(aligner: Aligner<Built>, target_seq: &[u8]) -> Self {
+        Self {
+            aligner,
+            target_seq: target_seq.to_vec(),
+        }
+    }
+
+    pub fn target_seq(&self) -> &[u8] {
+        &self.target_seq
+    }
+}
+
 impl Deref for NoMemLeakAligner {
     type Target = Aligner<Built>;
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.aligner
     }
 }
 
 impl DerefMut for NoMemLeakAligner {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+        &mut self.aligner
     }
 }
 
 impl Drop for NoMemLeakAligner {
     fn drop(&mut self) {
-        // let idx = self.idx.take().unwrap();
+        // let idx = self.aligner.idx.take().unwrap();
         // // unsafe {
         // //     mm_idx_destroy(*idx.as_ref());
         // // }
-    }
-}
-
-impl From<Aligner<Built>> for NoMemLeakAligner {
-    fn from(value: Aligner<Built>) -> Self {
-        Self(value)
     }
 }
 
@@ -120,7 +135,9 @@ pub fn build_aligner(
 
         handles
             .into_iter()
-            .map(|hd| NoMemLeakAligner(hd.join().unwrap()))
+            // spawn 顺序与 targets 一致, 按下标配对即可拿到 aligner 对应的 target 序列
+            .zip(targets.iter())
+            .map(|(hd, target)| NoMemLeakAligner::new(hd.join().unwrap(), target.seq.as_bytes()))
             .collect::<Vec<_>>()
     });
 
@@ -175,7 +192,8 @@ pub fn build_aligner_v2(
     aligner.mapopt.best_n = 5; // top best_n chains are subjected to DP alignment
                                // aligner.mapopt.pri_ratio = 0.1; // secondary-to-primary score ratio to output secondary mappings
 
-    NoMemLeakAligner(aligner)
+    // 一个 aligner 对应多个 target, 无法给出单一的 target_seq, 依赖它的 cigar 后处理不可用
+    NoMemLeakAligner::new(aligner, &[])
 }
 
 pub fn query_seq_sender(
@@ -246,9 +264,9 @@ pub fn align_worker(
 ) {
     for query_record in query_record_recv {
         let hits = if map_params.query_forward {
-            align_single_query_to_targets_query_forward(&query_record, aligners)
+            align_single_query_to_targets_query_forward(&query_record, aligners, map_params)
         } else {
-            align_single_query_to_targets(&query_record, aligners)
+            align_single_query_to_targets(&query_record, aligners, map_params)
         };
         let records = hits2records(&hits, &query_record, target_idx);
 
@@ -284,15 +302,35 @@ fn map_query_to_target(
         .collect()
 }
 
+/// 对 hits 做多聚物区 gap 左移规范化。hits 中每项为 (hit, 该 hit 所属 target 的序列),
+/// query 传入原始方向的序列(`aligned_2_str` 会按 hit 的 strand 自行 reverse complement)
+fn poly_gap_left_align_hits(hits: &mut [(Mapping, &[u8])], query_seq: &[u8]) {
+    for (hit, target_seq) in hits.iter_mut() {
+        cigar_adjust_poly_gap_left_align(hit, *target_seq, query_seq);
+    }
+}
+
 pub fn align_single_query_to_targets(
     query_record: &gskits::ds::ReadInfo,
     aligners: &Vec<NoMemLeakAligner>,
+    map_params: &MapParams,
 ) -> Vec<Mapping> {
-    let mut all_hits = vec![];
+    // hit 与其所属 target 的序列成对保存, gap 左移需要读取 target 上的碱基
+    let mut all_hits: Vec<(Mapping, &[u8])> = vec![];
 
     for aligner in aligners {
-        all_hits.extend(map_query_to_target(aligner, query_record));
+        all_hits.extend(
+            map_query_to_target(aligner, query_record)
+                .into_iter()
+                .map(|hit| (hit, aligner.target_seq())),
+        );
     }
+
+    if map_params.poly_n_gap_left_align {
+        poly_gap_left_align_hits(&mut all_hits, query_record.seq.as_bytes());
+    }
+
+    let mut all_hits: Vec<Mapping> = all_hits.into_iter().map(|(hit, _)| hit).collect();
 
     // set_primary_alignment_according_2_align_score(&mut all_hits);
     set_primary_supp_alignment_according_2_align_score(&mut all_hits);
@@ -313,11 +351,15 @@ pub fn align_single_query_to_targets(
 pub fn align_single_query_to_targets_query_forward(
     query_record: &gskits::ds::ReadInfo,
     aligners: &Vec<NoMemLeakAligner>,
+    map_params: &MapParams,
 ) -> Vec<Mapping> {
     #[derive(Default)]
-    struct TargetHits {
+    struct TargetHits<'a> {
         fwd: Vec<Mapping>,
         rev: Vec<Mapping>,
+        // 每一侧的 hits 都来自唯一一个 aligner(即唯一一个 target), 记录其序列供 gap 左移使用
+        fwd_seq: &'a [u8],
+        rev_seq: &'a [u8],
     }
 
     // 按 target 首次出现的顺序排列, 保证结果可复现
@@ -345,20 +387,33 @@ pub fn align_single_query_to_targets_query_forward(
         let target_hits = &mut grouped[pos].1;
         if is_fwd {
             target_hits.fwd.append(&mut hits);
+            target_hits.fwd_seq = aligner.target_seq();
         } else {
             target_hits.rev.append(&mut hits);
+            target_hits.rev_seq = aligner.target_seq();
         }
     }
 
-    let mut all_hits = vec![];
-    for (_, mut target_hits) in grouped {
-        match pk_target_strands(&target_hits.fwd, &target_hits.rev) {
-            Some(true) => all_hits.append(&mut target_hits.fwd),
-            Some(false) => all_hits.append(&mut target_hits.rev),
+    // hit 与其所属 target 的序列成对保存, gap 左移需要读取 target 上的碱基
+    let mut all_hits: Vec<(Mapping, &[u8])> = vec![];
+    for (_, target_hits) in grouped {
+        // 两侧都可能有 hit, pk 之后再取用胜出方的序列, 避免调整被丢弃的 hits
+        let keep_fwd = pk_target_strands(&target_hits.fwd, &target_hits.rev);
+        let (hits, target_seq) = match keep_fwd {
+            Some(true) => (target_hits.fwd, target_hits.fwd_seq),
+            Some(false) => (target_hits.rev, target_hits.rev_seq),
             // 两份 index 上的 primary 都不在 query forward 链上, 无法保持 query 方向不变
-            None => {}
-        }
+            None => continue,
+        };
+
+        all_hits.extend(hits.into_iter().map(|hit| (hit, target_seq)));
     }
+
+    if map_params.poly_n_gap_left_align {
+        poly_gap_left_align_hits(&mut all_hits, query_record.seq.as_bytes());
+    }
+
+    let mut all_hits: Vec<Mapping> = all_hits.into_iter().map(|(hit, _)| hit).collect();
 
     set_primary_supp_alignment_according_2_align_score(&mut all_hits);
     all_hits
@@ -816,7 +871,7 @@ mod tests {
         let query_filter_iter =
             gskits::fastx_reader::fasta_reader::FastaFileReader::new(query_file.to_string());
         for qr in query_filter_iter {
-            let hits = align_single_query_to_targets(&qr, &aligners);
+            let hits = align_single_query_to_targets(&qr, &aligners, &MapParams::default());
             let records = hits2records(&hits, &qr, &target2idx);
             for record in records {
                 assert_eq!(record.reference_start(), 720);
@@ -877,8 +932,16 @@ mod tests {
             };
 
             // 同一条 read 的正反两条链, query_forward 模式下结果应当等价
-            let hits = align_single_query_to_targets_query_forward(&query, &aligners);
-            let rev_hits = align_single_query_to_targets_query_forward(&rev_query, &aligners);
+            let hits = align_single_query_to_targets_query_forward(
+                &query,
+                &aligners,
+                &MapParams::default(),
+            );
+            let rev_hits = align_single_query_to_targets_query_forward(
+                &rev_query,
+                &aligners,
+                &MapParams::default(),
+            );
             assert!(!hits.is_empty() && !rev_hits.is_empty());
 
             let primary = primary_hit(&hits).unwrap();
@@ -946,7 +1009,136 @@ mod tests {
             "q".to_string(),
             format!("{}{}", "CGAT".repeat(500), "GCTA".repeat(500)),
         );
-        assert!(align_single_query_to_targets_query_forward(&query, &aligners).is_empty());
+        assert!(align_single_query_to_targets_query_forward(
+            &query,
+            &aligners,
+            &MapParams::default()
+        )
+        .is_empty());
+    }
+
+    /// 一个 30A 的同聚物 run, 前后缀都不含 AA(前缀以 T 结尾, 后缀以 G 开头),
+    /// 因此 run 的边界是唯一的
+    fn poly_gap_left_align_target() -> String {
+        format!(
+            "{}{}{}",
+            "CGAT".repeat(15),
+            "A".repeat(30),
+            "GCTA".repeat(15)
+        )
+    }
+
+    /// 与 `poly_gap_left_align_target` 等长, 但碱基完全不同
+    fn poly_gap_left_align_decoy_target() -> String {
+        format!(
+            "{}{}{}",
+            "GCTA".repeat(15),
+            "C".repeat(30),
+            "CGAT".repeat(15)
+        )
+    }
+
+    fn poly_gap_left_align_targets() -> Vec<ReadInfo> {
+        vec![ReadInfo::new_fa_record(
+            "t".to_string(),
+            poly_gap_left_align_target(),
+        )]
+    }
+
+    /// 上述 target 删掉 run 最左侧 5 个 A 之后的 read
+    fn poly_gap_left_align_query() -> ReadInfo {
+        ReadInfo::new_fa_record(
+            "q".to_string(),
+            format!(
+                "{}{}{}",
+                "CGAT".repeat(15),
+                "A".repeat(25),
+                "GCTA".repeat(15)
+            ),
+        )
+    }
+
+    fn build_poly_gap_left_align_aligners(targets: &Vec<ReadInfo>) -> Vec<NoMemLeakAligner> {
+        let mut index_params = IndexParams::default();
+        index_params.kmer = Some(11);
+        index_params.wins = Some(1);
+
+        build_aligner(
+            "map-ont",
+            &index_params,
+            &MapParams::default(),
+            &AlignParams::default(),
+            &OupParams::default(),
+            targets,
+            10,
+        )
+    }
+
+    fn primary_cigar(hit: &Mapping) -> Vec<(u32, u8)> {
+        hit.alignment
+            .as_ref()
+            .unwrap()
+            .cigar
+            .as_ref()
+            .unwrap()
+            .clone()
+    }
+
+    /// --polyNGapLeftAlign: 5A 的删除被摆到同聚物 run 的最左侧, 即紧跟 60bp 的前缀
+    const LEFT_ALIGNED_CIGAR: [(u32, u8); 3] = [(60, 7), (5, 2), (85, 7)];
+
+    #[test]
+    fn test_align_single_query_to_targets_poly_gap_left_align() {
+        let targets = vec![
+            // 与真 target 等长但碱基完全不同: 一旦 gap 左移用错了 target 序列,
+            // 重建出的 cigar 会在前后缀上出现大量 mismatch(op 8)
+            ReadInfo::new_fa_record("decoy".to_string(), poly_gap_left_align_decoy_target()),
+            ReadInfo::new_fa_record("t".to_string(), poly_gap_left_align_target()),
+        ];
+        let aligners = build_poly_gap_left_align_aligners(&targets);
+        let query = poly_gap_left_align_query();
+
+        let adjusted_hits = align_single_query_to_targets(
+            &query,
+            &aligners,
+            &MapParams::default().set_poly_n_gap_left_align(true),
+        );
+        let adjusted = adjusted_hits.iter().find(|hit| hit.is_primary).unwrap();
+        assert_eq!(adjusted.target_name.as_ref().unwrap().as_str(), "t");
+        assert_eq!(adjusted.target_start, 0);
+        assert_eq!(adjusted.query_start, 0);
+        assert_eq!(primary_cigar(adjusted), LEFT_ALIGNED_CIGAR);
+
+        // 开关只改写 gap 的位置, 不影响 primary/supp 判定与比对分数。
+        // minimap2 在这组数据上本来就输出左对齐的 gap, 因此两侧 cigar 一致
+        // (非左对齐的输入由 cigar_adjust 的单测覆盖)
+        let plain_hits = align_single_query_to_targets(&query, &aligners, &MapParams::default());
+        assert_eq!(plain_hits.len(), adjusted_hits.len());
+        for (plain, adjusted) in plain_hits.iter().zip(adjusted_hits.iter()) {
+            assert_eq!(plain.is_primary, adjusted.is_primary);
+            assert_eq!(plain.is_supplementary, adjusted.is_supplementary);
+            assert_eq!(alignment_score(plain), alignment_score(adjusted));
+            assert_eq!(primary_cigar(plain), primary_cigar(adjusted));
+        }
+    }
+
+    #[test]
+    fn test_align_single_query_to_targets_query_forward_poly_gap_left_align() {
+        let qf_targets = targets_to_query_forward_targets(&poly_gap_left_align_targets());
+        let aligners = build_poly_gap_left_align_aligners(&qf_targets);
+        let query = poly_gap_left_align_query();
+
+        let hits = align_single_query_to_targets_query_forward(
+            &query,
+            &aligners,
+            &MapParams::default().set_poly_n_gap_left_align(true),
+        );
+        assert_eq!(hits.len(), 1);
+        let hit = hits.first().unwrap();
+        assert_eq!(hit.strand, minimap2::Strand::Forward);
+        assert_eq!(hit.target_name.as_ref().unwrap().as_str(), "t___fwd");
+        assert_eq!(hit.target_start, 0);
+        assert_eq!(primary_cigar(hit), LEFT_ALIGNED_CIGAR);
     }
 
     #[test]
@@ -992,7 +1184,7 @@ mod tests {
             .with_sam_hit_only()
             .with_seq_and_id(b"ACGGTAGAGAGGAAGAAGAAGGAATAGCGGACTTGTGTATTTTATCGTCATTCGTGGTTATCATATAGTTTATTGATTTGAAGACTACGTAAGTAATTTGAGGACTGATTAAAATTTTCTTTTTTAGCTTAGAGTCAATTAAAGAGGGCAAAATTTTCTCAAAAGACCATGGTGCATATGACGATAGCTTTAGTAGTATGGATTGGGCTCTTCTTTCATGGATGTTATTCAGAAGGAGTGATATATCGAGGTGTTTGAAACACCAGCGACACCAGAAGGCTGTGGATGTTAAATCGTAGAACCTATAGACGAGTTCTAAAATATACTTTGGGGTTTTCAGCGATGCAAAA",  b"ref")
             .unwrap();
-            let aligner = NoMemLeakAligner(aligner);
+            let aligner = NoMemLeakAligner::new(aligner, &[]);
         }
     }
 

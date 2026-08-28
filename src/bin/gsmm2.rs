@@ -160,11 +160,20 @@ pub struct MapArgs {
     /// bam. targets with no forward-strand primary are filtered out
     #[arg(long = "query-forward")]
     pub query_forward: bool,
+
+    /// left-align insertions/deletions that sit inside a homopolymer (or any other
+    /// equivalent region) of the target, so that a poly-N / poly-X gap is always placed
+    /// on the leftmost possible position of the run. only the cigar is rewritten, the
+    /// cs / md tags keep the position they had before the adjustment
+    #[arg(long = "polyNGapLeftAlign")]
+    pub poly_n_gap_left_align: bool,
 }
 
 impl MapArgs {
     pub fn to_map_params(&self) -> MapParams {
-        MapParams::default().set_query_forward(self.query_forward)
+        MapParams::default()
+            .set_query_forward(self.query_forward)
+            .set_poly_n_gap_left_align(self.poly_n_gap_left_align)
     }
 }
 

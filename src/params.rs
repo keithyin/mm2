@@ -153,6 +153,10 @@ pub struct MapParams {
     /// 比对时二选一, 保证输出的 record 中 query 始终处于原始(forward)链。
     /// 见 `mm2::targets_to_query_forward_targets`
     pub query_forward: bool,
+
+    /// 对 hits 的 cigar 做多聚物区 gap 左移规范化, 使得同聚物(等价区)中的
+    /// ins/del 总是摆放在最左侧。见 `crate::cigar_adjust::cigar_adjust_poly_gap_left_align`
+    pub poly_n_gap_left_align: bool,
 }
 
 impl MapParams {
@@ -162,6 +166,11 @@ impl MapParams {
 
     pub fn set_query_forward(mut self, query_forward: bool) -> Self {
         self.query_forward = query_forward;
+        self
+    }
+
+    pub fn set_poly_n_gap_left_align(mut self, poly_n_gap_left_align: bool) -> Self {
+        self.poly_n_gap_left_align = poly_n_gap_left_align;
         self
     }
 }

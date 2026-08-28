@@ -95,6 +95,19 @@ pub fn cigar_adjust_poly_gap_left_align(
     let aligned_target = unsafe { aligned_target.as_bytes_mut() };
     let aligned_seq = unsafe { aligned_seq.as_bytes_mut() };
 
+    if aligned_target.is_empty() {
+        // 空的比对区域(理论上不会出现), 下面的位移逻辑依赖至少一列
+        return;
+    }
+
+    // minimap2 生成 eqx 时比较的是 2-bit 编码的碱基, 与大小写无关(软遮蔽的 reference 往往
+    // 是小写的)。这里统一成大写, 否则碱基相同的列会被 compute_cigar_state 判成 mismatch,
+    // 重建出的 cigar 会把 '=' 写成 'X'
+    for (t, q) in aligned_target.iter_mut().zip(aligned_seq.iter_mut()) {
+        *t = t.to_ascii_uppercase();
+        *q = q.to_ascii_uppercase();
+    }
+
     // 插入和删除的左移会互相解锁（一侧的交换可能让另一侧在相邻列获得可移动条件），
     // 因此迭代到不动点为止。每次交换都使 gap 严格左移，总和单调递减，必然终止。
     loop {

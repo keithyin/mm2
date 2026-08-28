@@ -448,7 +448,8 @@ pub fn compute_timer_err(
     oup_params: &OupParams,
     debug: bool,
 ) -> Box<dyn TMetric> {
-    let hits = align_single_query_to_targets(&query_record, aligners);
+    // metric 路径不做 cigar 后处理, 也不展开 fwd/rev target, 保持默认的 map params
+    let hits = align_single_query_to_targets(&query_record, aligners, &MapParams::default());
 
     if hits.is_empty() || (hits.len() > 0 && oup_params.discard_multi_align_reads) {
         return Box::new(TimeErrMetric::new(
