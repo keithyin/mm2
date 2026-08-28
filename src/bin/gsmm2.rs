@@ -8,7 +8,7 @@ use gskits::{
 use mm2::params::{AlignParams, IndexParams, InputFilterParams, MapParams, OupParams};
 use mm2::{
     align_worker, bam_writer::write_bam_worker, build_aligner, query_seq_sender,
-    targets_to_targetsidx,
+    targets_to_query_forward_targets, targets_to_targetsidx,
 };
 
 use std::str::FromStr;
@@ -153,11 +153,18 @@ impl IoArgs {
 }
 
 #[derive(Debug, Args, Clone, Default)]
-pub struct MapArgs {}
+pub struct MapArgs {
+    /// build an index on both strands of every target (${target}___fwd / ${target}___rev)
+    /// and, for each target, keep only the strand whose primary alignment leaves the query
+    /// on its forward chain. reads are therefore never reverse complemented in the output
+    /// bam. targets with no forward-strand primary are filtered out
+    #[arg(long = "query-forward")]
+    pub query_forward: bool,
+}
 
 impl MapArgs {
     pub fn to_map_params(&self) -> MapParams {
-        MapParams::default()
+        MapParams::default().set_query_forward(self.query_forward)
     }
 }
 
@@ -260,13 +267,25 @@ fn alignment(preset: &str, tot_threads: Option<usize>, args: &ReadsToRefAlignArg
 
     let fa_iter = FastaFileReader::new(target_filename.to_string());
     let targets = read_fastx(fa_iter);
-    let target2idx = targets_to_targetsidx(&targets);
 
     let index_params = args.index_args.to_index_params();
     let map_params = args.map_args.to_map_params();
     let align_params = args.align_args.to_align_params();
     let oup_params = args.oup_args.to_oup_params();
     let inp_filter_params = args.io_args.to_input_filter_params();
+
+    // query_forward: 为每个 target 额外构建反向链, 后续的 aligner/header 都基于展开后的 target
+    let targets = if map_params.query_forward {
+        tracing::info!(
+            "query-forward: expanding {} targets into {} ___fwd/___rev targets",
+            targets.len(),
+            targets.len() * 2
+        );
+        targets_to_query_forward_targets(&targets)
+    } else {
+        targets
+    };
+    let target2idx = targets_to_targetsidx(&targets);
 
     let aligners = build_aligner(
         preset,
@@ -288,6 +307,7 @@ fn alignment(preset: &str, tot_threads: Option<usize>, args: &ReadsToRefAlignArg
         let target2idx = &target2idx;
         let inp_filter_params = &inp_filter_params;
         let oup_params = &oup_params;
+        let map_params = &map_params;
         let (qs_sender, qs_recv) = crossbeam::channel::bounded(1000);
         s.spawn(move || {
             query_seq_sender(
@@ -310,6 +330,7 @@ fn alignment(preset: &str, tot_threads: Option<usize>, args: &ReadsToRefAlignArg
                     aligners,
                     target2idx,
                     oup_params,
+                    map_params,
                 )
             });
         }

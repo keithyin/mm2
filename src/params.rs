@@ -148,7 +148,23 @@ impl TOverrideAlignerParam for AlignParams {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct MapParams {}
+pub struct MapParams {
+    /// 为每个 target 构建 `${name}___fwd` / `${name}___rev` 两份 index,
+    /// 比对时二选一, 保证输出的 record 中 query 始终处于原始(forward)链。
+    /// 见 `mm2::targets_to_query_forward_targets`
+    pub query_forward: bool,
+}
+
+impl MapParams {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_query_forward(mut self, query_forward: bool) -> Self {
+        self.query_forward = query_forward;
+        self
+    }
+}
 
 impl TOverrideAlignerParam for MapParams {
     fn modify_aligner(&self, _aligner: &mut Aligner<PresetSet>) {}

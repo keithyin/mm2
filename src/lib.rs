@@ -242,9 +242,14 @@ pub fn align_worker(
     aligners: &Vec<NoMemLeakAligner>,
     target_idx: &HashMap<String, (usize, usize)>,
     oup_params: &OupParams,
+    map_params: &MapParams,
 ) {
     for query_record in query_record_recv {
-        let hits = align_single_query_to_targets(&query_record, aligners);
+        let hits = if map_params.query_forward {
+            align_single_query_to_targets_query_forward(&query_record, aligners)
+        } else {
+            align_single_query_to_targets(&query_record, aligners)
+        };
         let records = hits2records(&hits, &query_record, target_idx);
 
         if oup_params.discard_multi_align_reads && records.len() > 1 {
@@ -259,6 +264,26 @@ pub fn align_worker(
     }
 }
 
+/// 将 query 比对到单个 aligner(即单个 target) 上, 过滤掉没有 alignment 的 hit
+fn map_query_to_target(
+    aligner: &NoMemLeakAligner,
+    query_record: &gskits::ds::ReadInfo,
+) -> Vec<Mapping> {
+    aligner
+        .map(
+            query_record.seq.as_bytes(),
+            true,
+            true,
+            None,
+            Some(&[67108864]), // 67108864 eqx
+            Some(query_record.name.as_bytes()),
+        )
+        .unwrap()
+        .into_iter()
+        .filter(|hit| hit.alignment.is_some()) // filter unmapped
+        .collect()
+}
+
 pub fn align_single_query_to_targets(
     query_record: &gskits::ds::ReadInfo,
     aligners: &Vec<NoMemLeakAligner>,
@@ -266,29 +291,119 @@ pub fn align_single_query_to_targets(
     let mut all_hits = vec![];
 
     for aligner in aligners {
-        for hit in aligner
-            .map(
-                query_record.seq.as_bytes(),
-                true,
-                true,
-                None,
-                Some(&[67108864]), // 67108864 eqx
-                Some(query_record.name.as_bytes()),
-            )
-            .unwrap()
-        {
-            if hit.alignment.is_none() {
-                // filter unmapped
-                continue;
-            }
-
-            all_hits.push(hit);
-        }
+        all_hits.extend(map_query_to_target(aligner, query_record));
     }
 
     // set_primary_alignment_according_2_align_score(&mut all_hits);
     set_primary_supp_alignment_according_2_align_score(&mut all_hits);
     all_hits
+}
+
+/// query_forward 模式下的比对。
+///
+/// aligners 需要由 `targets_to_query_forward_targets` 产出的 target 构建, 即每个真实的
+/// target 都有 `${name}___fwd` / `${name}___rev` 两份。对同一个 target 的这两份结果做
+/// 二选一, 只保留 primary alignment 的 query strand 为 forward 的那份, 从而保证输出的
+/// record 中 query 始终处于原始方向(不会被 reverse complement)。
+///
+/// - 两份都是 forward: 取 primary score 高的那份
+/// - 两份都是 reverse(或两侧都没有 hit): 该 target 的结果被过滤掉
+///
+/// 胜出方的 secondary/supplementary hits 原样保留。
+pub fn align_single_query_to_targets_query_forward(
+    query_record: &gskits::ds::ReadInfo,
+    aligners: &Vec<NoMemLeakAligner>,
+) -> Vec<Mapping> {
+    #[derive(Default)]
+    struct TargetHits {
+        fwd: Vec<Mapping>,
+        rev: Vec<Mapping>,
+    }
+
+    // 按 target 首次出现的顺序排列, 保证结果可复现
+    let mut grouped: Vec<(String, TargetHits)> = vec![];
+    let mut name2pos: HashMap<String, usize> = HashMap::new();
+
+    for aligner in aligners {
+        let mut hits = map_query_to_target(aligner, query_record);
+        if hits.is_empty() {
+            // 该 target 上没有 hit, 无需参与 pk
+            continue;
+        }
+
+        let (base_name, is_fwd) = split_target_strand_name(
+            hits.first()
+                .and_then(|hit| hit.target_name.as_ref())
+                .map(|name| name.as_str())
+                .unwrap_or(""),
+        );
+
+        let pos = *name2pos.entry(base_name.clone()).or_insert_with(|| {
+            grouped.push((base_name, TargetHits::default()));
+            grouped.len() - 1
+        });
+        let target_hits = &mut grouped[pos].1;
+        if is_fwd {
+            target_hits.fwd.append(&mut hits);
+        } else {
+            target_hits.rev.append(&mut hits);
+        }
+    }
+
+    let mut all_hits = vec![];
+    for (_, mut target_hits) in grouped {
+        match pk_target_strands(&target_hits.fwd, &target_hits.rev) {
+            Some(true) => all_hits.append(&mut target_hits.fwd),
+            Some(false) => all_hits.append(&mut target_hits.rev),
+            // 两份 index 上的 primary 都不在 query forward 链上, 无法保持 query 方向不变
+            None => {}
+        }
+    }
+
+    set_primary_supp_alignment_according_2_align_score(&mut all_hits);
+    all_hits
+}
+
+/// 将 `${name}___fwd` / `${name}___rev` 拆成 (name, 是否为正向链)。
+/// 不带后缀的 target 名视为正向链, 即没有对手参与 pk。
+fn split_target_strand_name(target_name: &str) -> (String, bool) {
+    if let Some(base_name) = target_name.strip_suffix(QUERY_FORWARD_FWD_SUFFIX) {
+        (base_name.to_string(), true)
+    } else if let Some(base_name) = target_name.strip_suffix(QUERY_FORWARD_REV_SUFFIX) {
+        (base_name.to_string(), false)
+    } else {
+        (target_name.to_string(), true)
+    }
+}
+
+/// 对同一 target 的 fwd / rev 两组 hits 二选一。
+/// `Some(true)` 取 fwd 组, `Some(false)` 取 rev 组, `None` 表示两侧的 primary 都不在
+/// query forward 链上(该 target 的结果需要被过滤掉)。
+fn pk_target_strands(fwd: &[Mapping], rev: &[Mapping]) -> Option<bool> {
+    let (fwd_primary, rev_primary) = (primary_hit(fwd), primary_hit(rev));
+
+    match (
+        fwd_primary.map(|hit| hit.strand),
+        rev_primary.map(|hit| hit.strand),
+    ) {
+        (Some(minimap2::Strand::Forward), Some(minimap2::Strand::Forward)) => {
+            Some(alignment_score(fwd_primary.unwrap()) >= alignment_score(rev_primary.unwrap()))
+        }
+        (Some(minimap2::Strand::Forward), _) => Some(true),
+        (_, Some(minimap2::Strand::Forward)) => Some(false),
+        _ => None,
+    }
+}
+
+/// 单个 target 的 hits 中的 primary, 没有 primary 时退化为 score 最高的 hit
+fn primary_hit(hits: &[Mapping]) -> Option<&Mapping> {
+    hits.iter()
+        .find(|hit| hit.is_primary)
+        .or_else(|| hits.iter().max_by_key(|hit| alignment_score(hit)))
+}
+
+fn alignment_score(hit: &Mapping) -> i32 {
+    hit.alignment.as_ref().unwrap().alignment_score.unwrap()
 }
 
 pub fn hits2records(
@@ -507,6 +622,49 @@ pub fn targets_to_targetsidx(targets: &Vec<ReadInfo>) -> HashMap<String, (usize,
     target2idx
 }
 
+/// query_forward 模式下, 正向链 target 的名字后缀
+pub const QUERY_FORWARD_FWD_SUFFIX: &str = "___fwd";
+/// query_forward 模式下, 反向链 target 的名字后缀
+pub const QUERY_FORWARD_REV_SUFFIX: &str = "___rev";
+
+/// 将每个 target 展开为两份: `${name}___fwd`(原始序列) 和 `${name}___rev`
+/// (reverse complement), 两份交错排列。
+///
+/// 用于 query_forward 模式: 同一个 target 的两条链都建了 index, 比对时总可以选到
+/// query 处于 forward 链的那份, 详见
+/// `align_single_query_to_targets_query_forward`。
+pub fn targets_to_query_forward_targets(targets: &[ReadInfo]) -> Vec<ReadInfo> {
+    let mut res = Vec::with_capacity(targets.len() * 2);
+
+    for target in targets {
+        res.push(ReadInfo {
+            name: format!("{}{}", target.name, QUERY_FORWARD_FWD_SUFFIX),
+            seq: target.seq.clone(),
+            ..Default::default()
+        });
+
+        res.push(ReadInfo {
+            name: format!("{}{}", target.name, QUERY_FORWARD_REV_SUFFIX),
+            seq: rev_complement_for_index(target.seq.as_str()),
+            ..Default::default()
+        });
+    }
+
+    res
+}
+
+/// reverse complement 一个 target, 使得结果可以直接用于构建 minimap2 index。
+///
+/// gskits::dna::reverse_complement 会把 ACGTN/acgtn/-/* 之外的字符补成 NUL, 而 index
+/// 构建接口用 CStr 传序列, 遇到 NUL 会 panic, 这里统一将其替换成 N。
+fn rev_complement_for_index(seq: &str) -> String {
+    let mut seq = reverse_complement(seq.as_bytes());
+    seq.iter_mut()
+        .for_each(|b| *b = if *b == 0 { b'N' } else { *b });
+
+    String::from_utf8(seq).unwrap()
+}
+
 pub fn set_primary_alignment_according_2_align_score(hits: &mut Vec<Mapping>) {
     if hits.is_empty() {
         return;
@@ -665,6 +823,130 @@ mod tests {
                 assert_eq!(record.reference_end(), 1920)
             }
         }
+    }
+
+    #[test]
+    fn test_targets_to_query_forward_targets() {
+        let targets = vec![ReadInfo::new_fa_record(
+            "t".to_string(),
+            "ACGTAAACNRT".to_string(),
+        )];
+
+        let qf_targets = targets_to_query_forward_targets(&targets);
+
+        assert_eq!(qf_targets.len(), 2);
+        assert_eq!(qf_targets[0].name, "t___fwd");
+        assert_eq!(qf_targets[0].seq, "ACGTAAACNRT");
+        assert_eq!(qf_targets[1].name, "t___rev");
+        // R 不是 ACGTN, reverse_complement 会补成 NUL(CStr 不允许), 这里替换成了 N
+        assert_eq!(qf_targets[1].seq, "ANNGTTTACGT");
+    }
+
+    #[test]
+    fn test_align_single_query_to_targets_query_forward() {
+        let targets = read_fastx(FastaFileReader::new("test_data/ch11-6000.fa".to_string()));
+        let qf_targets = targets_to_query_forward_targets(&targets);
+        assert_eq!(qf_targets.len(), targets.len() * 2);
+
+        let mut index_params = IndexParams::default();
+        index_params.kmer = Some(11);
+        index_params.wins = Some(1);
+
+        let aligners = build_aligner(
+            "map-ont",
+            &index_params,
+            &MapParams::default(),
+            &AlignParams::default(),
+            &OupParams::default(),
+            &qf_targets,
+            10,
+        );
+        let target2idx = targets_to_targetsidx(&qf_targets);
+        assert_eq!(aligners.len(), qf_targets.len());
+
+        let queries = read_fastx(FastaFileReader::new(
+            "test_data/query_of_ch11.fa".to_string(),
+        ));
+        assert!(!queries.is_empty());
+
+        for query in queries {
+            let rev_query = ReadInfo {
+                name: query.name.clone(),
+                seq: String::from_utf8(reverse_complement(query.seq.as_bytes())).unwrap(),
+                ..Default::default()
+            };
+
+            // 同一条 read 的正反两条链, query_forward 模式下结果应当等价
+            let hits = align_single_query_to_targets_query_forward(&query, &aligners);
+            let rev_hits = align_single_query_to_targets_query_forward(&rev_query, &aligners);
+            assert!(!hits.is_empty() && !rev_hits.is_empty());
+
+            let primary = primary_hit(&hits).unwrap();
+            let rev_primary = primary_hit(&rev_hits).unwrap();
+
+            // primary 始终落在 query forward 链上, 即 read 不会被 reverse complement;
+            // 被选中的是 target 的哪一份链, 取决于 read 自身的方向, 两条 read 必然互补
+            assert_eq!(primary.strand, minimap2::Strand::Forward);
+            assert_eq!(rev_primary.strand, minimap2::Strand::Forward);
+
+            let (base_name, primary_on_fwd_target) =
+                split_target_strand_name(primary.target_name.as_ref().unwrap().as_str());
+            let (rev_base_name, rev_primary_on_fwd_target) =
+                split_target_strand_name(rev_primary.target_name.as_ref().unwrap().as_str());
+            assert_eq!(base_name, rev_base_name);
+            assert_ne!(primary_on_fwd_target, rev_primary_on_fwd_target);
+
+            // 两份 target 上的 hit 互为镜像: fwd 的 [s, e) <-> rev 的 [L - e, L - s)
+            assert_eq!(primary.target_len, rev_primary.target_len);
+            let target_len = primary.target_len;
+            let (fwd_hit, rev_hit) = if primary_on_fwd_target {
+                (primary, rev_primary)
+            } else {
+                (rev_primary, primary)
+            };
+            assert_eq!(fwd_hit.target_start, target_len - rev_hit.target_end);
+            assert_eq!(fwd_hit.target_end, target_len - rev_hit.target_start);
+            assert_eq!(alignment_score(primary), alignment_score(rev_primary));
+
+            // record 中 query 始终没有被 reverse complement
+            for (hits, query_record) in [(&hits, &query), (&rev_hits, &rev_query)] {
+                let records = hits2records(hits, query_record, &target2idx);
+                assert!(!records.is_empty());
+                for record in records {
+                    assert!(!record.is_reverse());
+                    assert_eq!(
+                        record.seq().as_bytes().to_vec(),
+                        query_record.seq.as_bytes().to_vec()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_align_single_query_to_targets_query_forward_no_hit() {
+        // 一条完全比对不上的 read, 两侧都没有 primary, 结果被过滤
+        let targets = vec![ReadInfo::new_fa_record("t".to_string(), "A".repeat(2000))];
+        let qf_targets = targets_to_query_forward_targets(&targets);
+
+        let mut index_params = IndexParams::default();
+        index_params.kmer = Some(11);
+        index_params.wins = Some(1);
+        let aligners = build_aligner(
+            "map-ont",
+            &index_params,
+            &MapParams::default(),
+            &AlignParams::default(),
+            &OupParams::default(),
+            &qf_targets,
+            10,
+        );
+
+        let query = ReadInfo::new_fa_record(
+            "q".to_string(),
+            format!("{}{}", "CGAT".repeat(500), "GCTA".repeat(500)),
+        );
+        assert!(align_single_query_to_targets_query_forward(&query, &aligners).is_empty());
     }
 
     #[test]
