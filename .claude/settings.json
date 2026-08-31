@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /root/.cargo/registry -name \"align.c\" -path \"*minimap2*\" 2>/dev/null | head; ls /root/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/ | grep -i minimap)",
+      "Read(//root/.cargo/registry/**)",
+      "Read(//root/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/**)"
+    ]
+  }
+}
