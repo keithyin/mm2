@@ -3,7 +3,20 @@
     "allow": [
       "Bash(find /root/.cargo/registry -name \"align.c\" -path \"*minimap2*\" 2>/dev/null | head; ls /root/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/ | grep -i minimap)",
       "Read(//root/.cargo/registry/**)",
-      "Read(//root/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/**)"
+      "Read(//root/.cargo/registry/src/rsproxy.cn-e3de039b2554c837/**)",
+      "Bash(sed -n '1,120p' ~/.cargo/registry/src/*/hp_tr_finder-0.2.3/src/lib.rs | grep -n \"extern\\\\|use \" ; grep -n \"hp_tr_finder\\\\|intervaltree\" /root/projects/mm2/Cargo.toml)",
+      "Bash(sed -n '1,58p' ~/.cargo/registry/src/*/intervaltree-0.2.7/src/lib.rs; grep -n \"pub fn get\\\\|pub fn query\\\\|pub struct PointQuery\" -A 18 ~/.cargo/registry/src/*/intervaltree-0.2.7/src/lib.rs | head -80)",
+      "Bash(sed -n '935,1040p' ~/.cargo/registry/src/*/minimap2-0.1.23+minimap2.2.28/src/lib.rs)",
+      "Read(//tmp/**)",
+      "Bash(/root/projects/mm2/target/release/gsmm2 align *)",
+      "Bash(samtools view *)",
+      "Bash(cat >> *)"
+    ],
+    "additionalDirectories": [
+      "/root/.cargo/registry/src/*/hp_tr_finder-0.2.3/src",
+      "/root/.cargo/registry/src/*/intervaltree-0.2.7/src",
+      "/root/.cargo/registry/src/*/minimap2-0.1.23+minimap2.2.28/src",
+      "/tmp"
     ]
   }
 }
