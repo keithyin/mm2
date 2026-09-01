@@ -7,6 +7,7 @@ use std::{
     cmp,
     collections::HashMap,
     ops::{Deref, DerefMut},
+    sync::Arc,
     thread,
 };
 
@@ -18,6 +19,7 @@ use gskits::{
     fastx_reader::{fasta_reader::FastaFileReader, fastq_reader::FastqReader},
     phreq::phreq_list_2_quality,
 };
+use hp_tr_shrink::HpTrRegions;
 use mapping_ext::MappingExt;
 use minimap2::{Aligner, Built, Mapping};
 use params::{
@@ -32,6 +34,7 @@ pub use gskits;
 pub use minimap2;
 pub mod aligned_pairs;
 pub mod cigar_adjust;
+pub mod hp_tr_shrink;
 pub mod visualization;
 
 pub type BamRecord = rust_htslib::bam::record::Record;
@@ -44,10 +47,30 @@ pub struct AlignResult {
 
 /// 单个 target 的 aligner 包装。除了 aligner 本身, 还保存该 aligner 的 index 所对应的
 /// target 序列, 以便对 hits 的 cigar 做后处理时需要读取 target 上的碱基
-/// (见 `cigar_adjust::cigar_adjust_poly_gap_left_align`)
+/// (见 `cigar_adjust::cigar_adjust_poly_gap_left_align`), 以及该 target 上的 HP/TR motif 表
+/// (见 `hp_tr_shrink::shrink_hit`, 只在 --hpTrShrinkAlnRegion 打开时构建)
 pub struct NoMemLeakAligner {
     pub aligner: Aligner<Built>,
     pub target_seq: Vec<u8>,
+    pub hp_tr_regions: Option<Arc<HpTrRegions>>,
+}
+
+/// 一个 hit 所属 target 的后处理上下文。`target_seq` 与 `hp_tr_regions` 都在该 aligner
+/// 实际建 index 的那条序列上取, 因此与 hit 的 target_start/target_end 同坐标系
+/// (--query-forward 展开出的 `___rev` 链也是如此, 不需要额外换算)
+#[derive(Clone, Copy)]
+pub struct TargetCtx<'a> {
+    pub target_seq: &'a [u8],
+    pub hp_tr_regions: Option<&'a HpTrRegions>,
+}
+
+impl Default for TargetCtx<'_> {
+    fn default() -> Self {
+        Self {
+            target_seq: &[],
+            hp_tr_regions: None,
+        }
+    }
 }
 
 impl NoMemLeakAligner {
@@ -55,11 +78,24 @@ impl NoMemLeakAligner {
         Self {
             aligner,
             target_seq: target_seq.to_vec(),
+            hp_tr_regions: None,
         }
+    }
+
+    pub fn with_hp_tr_regions(mut self, regions: Option<Arc<HpTrRegions>>) -> Self {
+        self.hp_tr_regions = regions;
+        self
     }
 
     pub fn target_seq(&self) -> &[u8] {
         &self.target_seq
+    }
+
+    pub fn target_ctx(&self) -> TargetCtx<'_> {
+        TargetCtx {
+            target_seq: &self.target_seq,
+            hp_tr_regions: self.hp_tr_regions.as_deref(),
+        }
     }
 }
 
@@ -95,6 +131,7 @@ pub fn build_aligner(
     threads: usize,
 ) -> Vec<NoMemLeakAligner> {
     let per_target_threads = (threads / targets.len()).max(1);
+    let hp_tr_shrink = map_args.hp_tr_shrink_aln_region;
 
     let aligners = thread::scope(|s| {
         let mut handles = vec![];
@@ -122,13 +159,21 @@ pub fn build_aligner(
                     .with_sam_hit_only()
                     .with_seq_and_id(target.seq.as_bytes(), target.name.as_bytes())
                     .unwrap();
-                
 
                 // https://github.com/lh3/minimap2/blob/618d33515e5853c4576d5a3d126fdcda28f0e8a4/options.c#L43
                 aligner.mapopt.best_n = 5; // top best_n chains are subjected to DP alignment
                                            // aligner.mapopt.pri_ratio = 0.1; // secondary-to-primary score ratio to output secondary mappings
 
-                aligner
+                // motif 表在 aligner 实际索引的那条序列上扫描, 与 hit 的 target 坐标同系。
+                // 扫描代价是每条 target 一次性的(约 340 条正则各过一遍序列), 由这里的
+                // per-target 线程并行分摊
+                let regions = if hp_tr_shrink {
+                    Some(hp_tr_shrink::build_hp_tr_regions(target.seq.as_str()))
+                } else {
+                    None
+                };
+
+                (aligner, regions)
             });
             handles.push(hd);
         }
@@ -137,14 +182,15 @@ pub fn build_aligner(
             .into_iter()
             // spawn 顺序与 targets 一致, 按下标配对即可拿到 aligner 对应的 target 序列
             .zip(targets.iter())
-            .map(|(hd, target)| NoMemLeakAligner::new(hd.join().unwrap(), target.seq.as_bytes()))
+            .map(|(hd, target)| {
+                let (aligner, regions) = hd.join().unwrap();
+                NoMemLeakAligner::new(aligner, target.seq.as_bytes()).with_hp_tr_regions(regions)
+            })
             .collect::<Vec<_>>()
     });
 
     aligners
 }
-
-
 
 /// does not work now
 pub fn build_aligner_v2(
@@ -241,6 +287,7 @@ pub fn query_seq_sender(
                 }
                 let rq = phreq_list_2_quality(record.qual.as_ref().unwrap()).unwrap_or(0.);
                 record.rq = Some(rq);
+
                 sender.send(record).unwrap();
             }
         } else {
@@ -302,11 +349,21 @@ fn map_query_to_target(
         .collect()
 }
 
-/// 对 hits 做多聚物区 gap 左移规范化。hits 中每项为 (hit, 该 hit 所属 target 的序列),
-/// query 传入原始方向的序列(`aligned_2_str` 会按 hit 的 strand 自行 reverse complement)
-fn poly_gap_left_align_hits(hits: &mut [(Mapping, &[u8])], query_seq: &[u8]) {
-    for (hit, target_seq) in hits.iter_mut() {
-        cigar_adjust_poly_gap_left_align(hit, *target_seq, query_seq);
+/// 对 hits 做多聚物区 gap 左移规范化。query 传入原始方向的序列
+/// (`aligned_2_str` 会按 hit 的 strand 自行 reverse complement)
+fn poly_gap_left_align_hits(hits: &mut [(Mapping, TargetCtx)], query_seq: &[u8]) {
+    for (hit, ctx) in hits.iter_mut() {
+        cigar_adjust_poly_gap_left_align(hit, ctx.target_seq, query_seq);
+    }
+}
+
+/// 收紧 hits 的比对区域: 比对末端落在 HP/TR 内部的那一段被裁掉。未开启
+/// --hpTrShrinkAlnRegion 时 target_ctx.hp_tr_regions 为 None, 这里什么也不做
+fn shrink_hp_tr_aln_region_hits(hits: &mut [(Mapping, TargetCtx)], query_seq: &[u8]) {
+    for (hit, ctx) in hits.iter_mut() {
+        if let Some(regions) = ctx.hp_tr_regions {
+            hp_tr_shrink::shrink_hit(hit, ctx.target_seq, query_seq, regions);
+        }
     }
 }
 
@@ -315,15 +372,20 @@ pub fn align_single_query_to_targets(
     aligners: &Vec<NoMemLeakAligner>,
     map_params: &MapParams,
 ) -> Vec<Mapping> {
-    // hit 与其所属 target 的序列成对保存, gap 左移需要读取 target 上的碱基
-    let mut all_hits: Vec<(Mapping, &[u8])> = vec![];
+    // hit 与其所属 target 的后处理上下文成对保存: gap 左移与比对区域收紧都要读 target 上的碱基
+    let mut all_hits: Vec<(Mapping, TargetCtx)> = vec![];
 
     for aligner in aligners {
         all_hits.extend(
             map_query_to_target(aligner, query_record)
                 .into_iter()
-                .map(|hit| (hit, aligner.target_seq())),
+                .map(|hit| (hit, aligner.target_ctx())),
         );
+    }
+
+    // 先收紧窗口再左移 gap: 反过来的话 gap 可能被左移到随后被裁掉的列上
+    if map_params.hp_tr_shrink_aln_region {
+        shrink_hp_tr_aln_region_hits(&mut all_hits, query_record.seq.as_bytes());
     }
 
     if map_params.poly_n_gap_left_align {
@@ -357,9 +419,10 @@ pub fn align_single_query_to_targets_query_forward(
     struct TargetHits<'a> {
         fwd: Vec<Mapping>,
         rev: Vec<Mapping>,
-        // 每一侧的 hits 都来自唯一一个 aligner(即唯一一个 target), 记录其序列供 gap 左移使用
-        fwd_seq: &'a [u8],
-        rev_seq: &'a [u8],
+        // 每一侧的 hits 都来自唯一一个 aligner(即唯一一个 target), 记录其上下文供
+        // gap 左移与比对区域收紧使用
+        fwd_ctx: TargetCtx<'a>,
+        rev_ctx: TargetCtx<'a>,
     }
 
     // 按 target 首次出现的顺序排列, 保证结果可复现
@@ -387,26 +450,31 @@ pub fn align_single_query_to_targets_query_forward(
         let target_hits = &mut grouped[pos].1;
         if is_fwd {
             target_hits.fwd.append(&mut hits);
-            target_hits.fwd_seq = aligner.target_seq();
+            target_hits.fwd_ctx = aligner.target_ctx();
         } else {
             target_hits.rev.append(&mut hits);
-            target_hits.rev_seq = aligner.target_seq();
+            target_hits.rev_ctx = aligner.target_ctx();
         }
     }
 
-    // hit 与其所属 target 的序列成对保存, gap 左移需要读取 target 上的碱基
-    let mut all_hits: Vec<(Mapping, &[u8])> = vec![];
+    // hit 与其所属 target 的后处理上下文成对保存
+    let mut all_hits: Vec<(Mapping, TargetCtx)> = vec![];
     for (_, target_hits) in grouped {
-        // 两侧都可能有 hit, pk 之后再取用胜出方的序列, 避免调整被丢弃的 hits
+        // 两侧都可能有 hit, pk 之后再取用胜出方的上下文, 避免调整被丢弃的 hits
         let keep_fwd = pk_target_strands(&target_hits.fwd, &target_hits.rev);
-        let (hits, target_seq) = match keep_fwd {
-            Some(true) => (target_hits.fwd, target_hits.fwd_seq),
-            Some(false) => (target_hits.rev, target_hits.rev_seq),
+        let (hits, ctx) = match keep_fwd {
+            Some(true) => (target_hits.fwd, target_hits.fwd_ctx),
+            Some(false) => (target_hits.rev, target_hits.rev_ctx),
             // 两份 index 上的 primary 都不在 query forward 链上, 无法保持 query 方向不变
             None => continue,
         };
 
-        all_hits.extend(hits.into_iter().map(|hit| (hit, target_seq)));
+        all_hits.extend(hits.into_iter().map(|hit| (hit, ctx)));
+    }
+
+    // 先收紧窗口再左移 gap, 理由同 align_single_query_to_targets
+    if map_params.hp_tr_shrink_aln_region {
+        shrink_hp_tr_aln_region_hits(&mut all_hits, query_record.seq.as_bytes());
     }
 
     if map_params.poly_n_gap_left_align {
@@ -1139,6 +1207,225 @@ mod tests {
         assert_eq!(hit.target_name.as_ref().unwrap().as_str(), "t___fwd");
         assert_eq!(hit.target_start, 0);
         assert_eq!(primary_cigar(hit), LEFT_ALIGNED_CIGAR);
+    }
+
+    /// HP/TR 比对区域收紧(--hpTrShrinkAlnRegion)端到端用例的 target。
+    /// 上面只有两处重复: `(AC)6` 占 [60,72), 21A 同聚物占 [102,123); 其余碱基是刻意挑出来
+    /// 的非重复序列(不能像 `poly_gap_left_align_target` 那样用 `"CGAT".repeat(n)`,
+    /// 那本身就是一条 (CGAT)n 串联重复, 会被整个当成 motif)
+    fn hp_tr_shrink_target() -> String {
+        [
+            "CCGTAATGCCTTCCTAACAGAGTTCGAACTCGTGTTGTCGAGCGACGGAATTAGATCAGT",
+            "ACACACACACAC",
+            "TAATGGCAGAACTGGCAGGCTTAGTCGTGG",
+            "AAAAAAAAAAAAAAAAAAAA",
+            "AGATGATCAGTGGTAAGGTGGCGCGGTAACGCGCCTAAGGC",
+        ]
+        .concat()
+    }
+
+    const HP_TR_STR: (usize, usize) = (60, 72);
+    /// 同聚物实际是 4th 段的 20 个 A 加上后缀首字符的 A, 共 21 个
+    const HP_TR_HP: (usize, usize) = (102, 123);
+
+    fn build_hp_tr_shrink_aligners(
+        map_params: &MapParams,
+    ) -> (Vec<NoMemLeakAligner>, Vec<ReadInfo>) {
+        let mut index_params = IndexParams::default();
+        index_params.kmer = Some(11);
+        index_params.wins = Some(1);
+
+        let targets = vec![ReadInfo::new_fa_record(
+            "t".to_string(),
+            hp_tr_shrink_target(),
+        )];
+        let targets: Vec<ReadInfo> = if map_params.query_forward {
+            targets_to_query_forward_targets(&targets)
+        } else {
+            targets.into_iter().collect()
+        };
+
+        let aligners = build_aligner(
+            "map-ont",
+            &index_params,
+            map_params,
+            &AlignParams::default(),
+            &OupParams::default(),
+            &targets,
+            10,
+        );
+        // motif 表只在开关打开时构建, 关闭时不付扫描代价
+        assert_eq!(
+            aligners.iter().all(|a| a.hp_tr_regions.is_some()),
+            map_params.hp_tr_shrink_aln_region
+        );
+
+        (aligners, targets)
+    }
+
+    fn hp_tr_shrink_align(query: &ReadInfo, shrink: bool) -> Option<Mapping> {
+        let map_params = MapParams::default().set_hp_tr_shrink_aln_region(shrink);
+        let (aligners, _) = build_hp_tr_shrink_aligners(&map_params);
+        align_single_query_to_targets(query, &aligners, &map_params)
+            .into_iter()
+            .find(|hit| hit.is_primary)
+    }
+
+    #[test]
+    fn test_align_single_query_to_targets_hp_tr_shrink() {
+        let target = hp_tr_shrink_target();
+        assert_eq!(target.len(), 163);
+        // fixture 上只有这两处会被扫成 motif
+        assert_eq!(&target[HP_TR_STR.0..HP_TR_STR.1], "ACACACACACAC");
+        assert_eq!(&target[HP_TR_HP.0..HP_TR_HP.1], "A".repeat(21));
+
+        // 比对末端停在 (AC)6 内部: 拉到重复区左端之外, 多出来的 read 碱基变 soft-clip
+        let query = ReadInfo::new_fa_record("q".to_string(), target[..70].to_string());
+        let plain = hp_tr_shrink_align(&query, false).expect("no hit");
+        assert_eq!((plain.target_start, plain.target_end), (0, 70));
+        assert_eq!(primary_cigar(&plain), vec![(70, 7)]);
+
+        let shrunk = hp_tr_shrink_align(&query, true).expect("no hit");
+        assert_eq!((shrunk.target_start, shrunk.target_end), (0, 60));
+        assert_eq!((shrunk.query_start, shrunk.query_end), (0, 60));
+        assert_eq!(primary_cigar(&shrunk), vec![(60, 7)]);
+        // cs / md 跟着裁剪后的列重建, 不再描述被裁掉的 10 个碱基
+        let aln = shrunk.alignment.as_ref().unwrap();
+        assert_eq!(aln.cs.as_deref(), Some(":60"));
+        assert_eq!(aln.md.as_deref(), Some("60"));
+
+        // 两端都落在重复区里: 只留下中间那段干净的比对
+        let query = ReadInfo::new_fa_record("q".to_string(), target[64..120].to_string());
+        let plain = hp_tr_shrink_align(&query, false).expect("no hit");
+        assert_eq!((plain.target_start, plain.target_end), (64, 123));
+        let shrunk = hp_tr_shrink_align(&query, true).expect("no hit");
+        assert_eq!(
+            (shrunk.target_start, shrunk.target_end),
+            (HP_TR_STR.1 as i32, HP_TR_HP.0 as i32)
+        );
+        assert_eq!((shrunk.query_start, shrunk.query_end), (8, 38));
+        assert_eq!(primary_cigar(&shrunk), vec![(30, 7)]);
+
+        // 比对始端停在同聚物内部
+        let query = ReadInfo::new_fa_record("q".to_string(), target[110..162].to_string());
+        let shrunk = hp_tr_shrink_align(&query, true).expect("no hit");
+        assert_eq!((shrunk.target_start, shrunk.target_end), (123, 162));
+        assert_eq!((shrunk.query_start, shrunk.query_end), (13, 52));
+        assert_eq!(primary_cigar(&shrunk), vec![(39, 7)]);
+
+        // 两端都干净(重复区完整落在比对区间中间): 开关不产生任何改动
+        let query = ReadInfo::new_fa_record("q".to_string(), target.clone());
+        let plain = hp_tr_shrink_align(&query, false).expect("no hit");
+        let shrunk = hp_tr_shrink_align(&query, true).expect("no hit");
+        assert_eq!(
+            (
+                plain.target_start,
+                plain.target_end,
+                plain.query_start,
+                plain.query_end
+            ),
+            (0, 163, 0, 163)
+        );
+        assert_eq!(
+            (
+                shrunk.target_start,
+                shrunk.target_end,
+                shrunk.query_start,
+                shrunk.query_end
+            ),
+            (
+                plain.target_start,
+                plain.target_end,
+                plain.query_start,
+                plain.query_end
+            )
+        );
+        assert_eq!(primary_cigar(&shrunk), primary_cigar(&plain));
+    }
+
+    /// 收紧后的 hit 落到 record 上: 被裁掉的 read 碱基必须是 soft-clip, 且 pos/reference_end
+    /// 与 cigar 覆盖的 ref 跨度自洽
+    #[test]
+    fn test_hp_tr_shrink_record() {
+        let target = hp_tr_shrink_target();
+        let query = ReadInfo::new_fa_record("q".to_string(), target[..70].to_string());
+
+        let map_params = MapParams::default().set_hp_tr_shrink_aln_region(true);
+        let (aligners, targets) = build_hp_tr_shrink_aligners(&map_params);
+        let hits = align_single_query_to_targets(&query, &aligners, &map_params);
+        let target2idx = targets_to_targetsidx(&targets);
+        let records = hits2records(&hits, &query, &target2idx);
+        assert_eq!(records.len(), 1);
+
+        let record = &records[0];
+        assert_eq!(record.reference_start(), 0);
+        assert_eq!(record.reference_end(), HP_TR_STR.0 as i64);
+        // 被裁掉的 10 个 read 碱基落在 soft-clip 里, cigar 覆盖的 ref 跨度 = ref_end - pos
+        assert_eq!(
+            record.cigar().iter().copied().collect::<Vec<_>>(),
+            vec![Cigar::Equal(60), Cigar::SoftClip(10)]
+        );
+        assert_eq!(record.seq_len() as usize, 70);
+    }
+
+    /// --query-forward 与 --hpTrShrinkAlnRegion 组合: motif 表建在每个 aligner 自己索引的
+    /// 那条序列上, `___rev` 链上的坐标天然一致, 不需要额外换算
+    #[test]
+    fn test_align_single_query_to_targets_query_forward_hp_tr_shrink() {
+        let target = hp_tr_shrink_target();
+
+        let map_params = MapParams::default()
+            .set_query_forward(true)
+            .set_hp_tr_shrink_aln_region(true);
+        let (aligners, targets) = build_hp_tr_shrink_aligners(&map_params);
+        assert_eq!(aligners.len(), targets.len());
+
+        // 原始方向的 read, 两端都落在重复区里
+        let query = ReadInfo::new_fa_record("q".to_string(), target[64..120].to_string());
+        let hits = align_single_query_to_targets_query_forward(&query, &aligners, &map_params);
+        let hit = hits.iter().find(|hit| hit.is_primary).expect("no hit");
+        assert_eq!(hit.strand, minimap2::Strand::Forward);
+        assert_eq!(hit.target_name.as_ref().unwrap().as_str(), "t___fwd");
+        assert_eq!((hit.target_start, hit.target_end), (72, 102));
+        assert_eq!((hit.query_start, hit.query_end), (8, 38));
+
+        // read 反向时命中的是 `___rev` 链, 收紧后的区间是同一条 target 的镜像:
+        // fwd 的 [s, e) <-> rev 的 [L - e, L - s)
+        let rev_query = ReadInfo {
+            name: "q".to_string(),
+            seq: String::from_utf8(reverse_complement(query.seq.as_bytes())).unwrap(),
+            ..Default::default()
+        };
+        let hits = align_single_query_to_targets_query_forward(&rev_query, &aligners, &map_params);
+        let hit = hits.iter().find(|hit| hit.is_primary).expect("no hit");
+        assert_eq!(hit.target_name.as_ref().unwrap().as_str(), "t___rev");
+        assert_eq!(
+            (hit.target_start, hit.target_end),
+            ((target.len() - 102) as i32, (target.len() - 72) as i32)
+        );
+
+        // record 里 query 始终没有被 reverse complement
+        let target2idx = targets_to_targetsidx(&targets);
+        for (hits, query_record) in [
+            (
+                align_single_query_to_targets_query_forward(&query, &aligners, &map_params),
+                &query,
+            ),
+            (
+                align_single_query_to_targets_query_forward(&rev_query, &aligners, &map_params),
+                &rev_query,
+            ),
+        ] {
+            let records = hits2records(&hits, query_record, &target2idx);
+            assert!(!records.is_empty());
+            for record in records {
+                assert!(!record.is_reverse());
+                assert_eq!(
+                    record.seq().as_bytes().to_vec(),
+                    query_record.seq.as_bytes().to_vec()
+                );
+            }
+        }
     }
 
     #[test]

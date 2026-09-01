@@ -1,6 +1,6 @@
 use crate::{mapping_ext::MappingExt, minimap2};
 
-const GAP: u8 = '-' as u8;
+pub(crate) const GAP: u8 = '-' as u8;
 
 /// 左移 target 上的 gap（即 query 相对 target 的插入），返回是否发生了移动。
 /// 前提：被跳过的 target 碱基与 gap 前 query 两列碱基相同（同聚物/等价区）。
@@ -62,7 +62,10 @@ fn compute_cigar_state(target_aligned_base: u8, query_aligned_base: u8) -> u8 {
 }
 
 /// Vec<(u32, u8)>
-fn aligned_pair_seqs_2_cigar(aligned_target: &[u8], aligned_seq: &[u8]) -> Vec<(u32, u8)> {
+pub(crate) fn aligned_pair_seqs_2_cigar(
+    aligned_target: &[u8],
+    aligned_seq: &[u8],
+) -> Vec<(u32, u8)> {
     let mut cigars = vec![];
     let mut cur_state = (
         1_u32,
