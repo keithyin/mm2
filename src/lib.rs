@@ -286,9 +286,11 @@ pub fn query_seq_sender(
                     record.seq.push_str(suffix);
                 }
                 let rq = phreq_list_2_quality(record.qual.as_ref().unwrap()).unwrap_or(0.);
-                record.rq = Some(rq);
 
-                sender.send(record).unwrap();
+                if input_filter_params.rq_valid(rq) {
+                    record.rq = Some(rq);
+                    sender.send(record).unwrap();
+                }
             }
         } else {
             panic!(

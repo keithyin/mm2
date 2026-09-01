@@ -14,7 +14,7 @@ pub trait TOverrideAlignerParam {
 pub struct InputFilterParams {
     pub np_range: Option<Range<i32>>,
     pub rq_range: Option<Range<f32>>,
-    pub qname_suffix: Option<String>
+    pub qname_suffix: Option<String>,
 }
 
 impl InputFilterParams {
@@ -58,6 +58,15 @@ impl InputFilterParams {
         }
 
         true
+    }
+
+    pub fn rq_valid(&self, rq: f32) -> bool {
+        if let Some(rq_range_) = &self.rq_range {
+            if !rq_range_.within_range(rq) {
+                return false;
+            }
+        }
+        return true;
     }
 }
 
