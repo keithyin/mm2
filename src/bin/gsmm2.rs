@@ -167,6 +167,16 @@ pub struct MapArgs {
     /// cs / md tags keep the position they had before the adjustment
     #[arg(long = "polyNGapLeftAlign")]
     pub poly_n_gap_left_align: bool,
+
+    /// shrink the alignment region when an alignment end falls inside a homopolymer or a
+    /// tandem repeat (unit <= 4, repeats >= 3) of the target. the alignment end is pulled
+    /// out of the repeat and the overhanging read bases become soft clips: a boundary
+    /// placed inside a repeat is arbitrary anyway, so the bases there are not trustworthy.
+    /// alignment score / mapq are left as they were, cs / md are rebuilt from the trimmed
+    /// columns. scanning the target for repeats costs one pass of ~340 regexes per target
+    /// at index building time
+    #[arg(long = "hpTrShrinkAlnRegion")]
+    pub hp_tr_shrink_aln_region: bool,
 }
 
 impl MapArgs {
@@ -174,6 +184,7 @@ impl MapArgs {
         MapParams::default()
             .set_query_forward(self.query_forward)
             .set_poly_n_gap_left_align(self.poly_n_gap_left_align)
+            .set_hp_tr_shrink_aln_region(self.hp_tr_shrink_aln_region)
     }
 }
 

@@ -23,6 +23,35 @@ gsmm2 align -q query.fa --target target.fa -p query2target
 
 # changelog
 
+## 1.2.0
+
+gsmm2 align
+
+* new flag `--hpTrShrinkAlnRegion`: when an alignment end falls inside a homopolymer or a
+  tandem repeat of the target (unit <= 4, repeats >= 3), the alignment region is shrunk so
+  the end sits outside the repeat. the trimmed read bases become soft clips.
+  A boundary placed inside a repeat is arbitrary -- every phase of the run is equivalent --
+  so the bases there are not trustworthy and should not be reported as aligned.
+  Migrated from gsmm2-metric's per-metric-target window shrink
+  (`hp_tr_metric_v2.rs` / `hp_tr_metric_v3.rs`), without its second alignment pass and
+  without the `get_target_substr` same-base trim.
+  * alignment score, mapq and nm are left as they were. cs and md are rebuilt from the
+    trimmed columns, byte-for-byte in the format minimap2's `write_cs_ds_core` /
+    `write_MD_core` produce, so the record stays self-consistent
+  * the repeat scan iterates to a fixpoint rather than taking one step like gsmm2-metric:
+    motifs nest (`ACAACAAC[A]AAA` is covered by both `(ACA)3` and `(A)4`) and abut, so a
+    single step can stop on a position that is still inside a repeat
+  * if the whole alignment sits inside a repeat the shrink would collapse it to zero
+    reference span, which breaks sorting/indexing, so the hit is left alone and a warn is
+    logged
+  * one interval tree per target, attached to `NoMemLeakAligner` next to `target_seq`,
+    built on the sequence that aligner actually indexes -- so the `___rev` targets of
+    `--query-forward` need no coordinate conversion. The scan is ~340 regexes over the
+    target once, ~7 MB/s per target thread (0.7s for the 4.6 MB E. coli reference), and
+    only runs when the flag is on
+  * runs before `--polyNGapLeftAlign`, so a gap is never left-aligned onto a column that is
+    then trimmed
+
 ## 0.23.0 
 
 * more tags to pass through

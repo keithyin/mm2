@@ -157,6 +157,10 @@ pub struct MapParams {
     /// 对 hits 的 cigar 做多聚物区 gap 左移规范化, 使得同聚物(等价区)中的
     /// ins/del 总是摆放在最左侧。见 `crate::cigar_adjust::cigar_adjust_poly_gap_left_align`
     pub poly_n_gap_left_align: bool,
+
+    /// 比对末端落在 reference 的 HP/TR 区内部时收紧比对区域, 把落在重复区里的那一段裁掉
+    /// (变成 soft-clip)。见 `crate::hp_tr_shrink::shrink_hit`
+    pub hp_tr_shrink_aln_region: bool,
 }
 
 impl MapParams {
@@ -171,6 +175,11 @@ impl MapParams {
 
     pub fn set_poly_n_gap_left_align(mut self, poly_n_gap_left_align: bool) -> Self {
         self.poly_n_gap_left_align = poly_n_gap_left_align;
+        self
+    }
+
+    pub fn set_hp_tr_shrink_aln_region(mut self, hp_tr_shrink_aln_region: bool) -> Self {
+        self.hp_tr_shrink_aln_region = hp_tr_shrink_aln_region;
         self
     }
 }
