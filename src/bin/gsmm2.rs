@@ -279,6 +279,15 @@ fn alignment(preset: &str, tot_threads: Option<usize>, args: &ReadsToRefAlignArg
     let tot_threads = tot_threads.unwrap_or(num_cpus::get());
     assert!(tot_threads >= 10, "at least 10 threads are needed");
 
+    let oup_path = args.io_args.get_oup_path();
+    for query in &args.io_args.query {
+        assert_ne!(
+            query, &oup_path,
+            "query file and output file are the same: {}",
+            query
+        );
+    }
+
     let target_filename = args
         .io_args
         .target
